@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PyScript Run Button Example</title>
+    <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+    <style>
+        textarea {
+            width: 100%;
+            height: 120px;
+            font-family: monospace;
+            font-size: 16px;
+        }
+        #output {
+            background: #f0f0f0;
+            padding: 10px;
+            white-space: pre-wrap;
+            border: 1px solid #ccc;
+            margin-top: 10px;
+        }
+        button {
+            margin-top: 10px;
+            padding: 6px 12px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Python Runner (PyScript)</h1>
+
+    <!-- Editable Python code -->
+    <textarea id="code">
+# Try changing this code!
+for i in range(5):
+    print(f"Hello, student! Line {i+1}")
+    </textarea>
+
+    <!-- Run button -->
+    <button id="runButton">Run</button>
+
+    <!-- Output area -->
+    <div id="output"></div>
+
+    <!-- PyScript for running code -->
+    <py-script>
+        from js import document
+        import sys
+        from pyodide.ffi import create_proxy
+        import io
+
+        output_div = document.getElementById("output")
+        run_button = document.getElementById("runButton")
+        code_area = document.getElementById("code")
+
+        def run_code(event):
+            # Clear previous output
+            output_div.innerText = ""
+            # Capture stdout
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                code = code_area.value
+                exec(code)
+            except Exception as e:
+                print(f"Error: {e}")
+            # Display captured output
+            output_div.innerText = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+        # Attach function to button
+        run_button.addEventListener("click", create_proxy(run_code))
+    </py-script>
+</body>
+</html>
