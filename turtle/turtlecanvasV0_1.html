@@ -54,7 +54,15 @@
     .CodeMirror-gutters { border-right: 1px solid #eee; }
 
     /* Right pane layout: Turtle canvas on top, console below */
-    #stageWrap { flex: 1; min-height: 0; background: #111; display: flex; }
+    #stageWrap {
+      flex: 1;
+      min-height: 0;
+      background: #111;
+      position: relative;
+      display: flex;
+    }
+
+    /* Base drawing canvas */
     #stage {
       margin: 12px;
       width: calc(100% - 24px);
@@ -62,6 +70,16 @@
       border: 1px solid #333;
       background: #111;
       display: block;
+    }
+
+    /* Overlay canvas for turtle triangle (same size, transparent) */
+    #overlay {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      right: 12px;
+      bottom: 12px;
+      pointer-events: none;
     }
 
     #consoleWrap { height: 240px; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
@@ -122,6 +140,7 @@
     <div class="pane-title">Turtle</div>
     <div id="stageWrap">
       <canvas id="stage"></canvas>
+      <canvas id="overlay"></canvas>
     </div>
 
     <div class="pane-title">
@@ -160,6 +179,10 @@
 
   const canvas = document.getElementById("stage");
   const ctx = canvas.getContext("2d");
+
+  const overlay = document.getElementById("overlay");
+  const octx = overlay.getContext("2d");
+
   let currentBg = "#111111";
 
   const setStatus = (s) => statusEl.textContent = s;
@@ -191,7 +214,7 @@
     leftPane.style.flex = `0 0 ${clamped}px`;
     rightPane.style.flex = `1 1 0`;
     cm.refresh();
-    fitCanvas();
+    fitCanvases();
   }
   splitter.addEventListener("pointerdown", (e) => {
     dragging = true;
@@ -211,14 +234,20 @@
     document.body.style.userSelect = "";
   });
 
-  /* ---------- Canvas: sizing + coordinate system ---------- */
-  function fitCanvas() {
-    const rect = canvas.getBoundingClientRect();
+  /* ---------- Canvas sizing + coordinate system ---------- */
+  function fitOneCanvas(c, context) {
+    const rect = c.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.width = Math.max(1, Math.floor(rect.width * dpr));
+    c.height = Math.max(1, Math.floor(rect.height * dpr));
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function fitCanvases() {
+    fitOneCanvas(canvas, ctx);
+    fitOneCanvas(overlay, octx);
     canvasClear();
+    redrawTurtle();
   }
 
   function canvasClear() {
@@ -227,25 +256,41 @@
     ctx.fillRect(0, 0, rect.width, rect.height);
   }
 
-  function toCanvas(x, y) {
+  function overlayClear() {
+    const rect = overlay.getBoundingClientRect();
+    octx.clearRect(0, 0, rect.width, rect.height);
+  }
+
+  function toCanvasXY(x, y) {
     const rect = canvas.getBoundingClientRect();
     return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
   }
 
-  // --- Turtle animation queue (for speed()) ---
+  window.addEventListener("resize", () => { cm.refresh(); fitCanvases(); });
+  fitCanvases();
+
+  /* ---------- Turtle animation queue (speed) ---------- */
   const drawQueue = [];
   let drawTimer = null;
 
+  // Even spacing 1..10, with 1 very slow and 10 very fast.
+  // Tune these two numbers if you want it slower/faster overall.
+  const SPEED_DELAY_SLOW = 450; // speed(1)
+  const SPEED_DELAY_FAST = 12;  // speed(10)
+
   function speedToDelay(speed) {
-    if (speed === 0 || speed === "0") return 0;
-    const s = Math.max(1, Math.min(10, Number(speed) || 10));
-    // 1 -> ~120ms, 10 -> ~10ms
-    return Math.round(130 - s * 12);
+    const n = Number(speed);
+    if (n === 0) return 0;
+
+    const s = Math.max(1, Math.min(10, Number.isFinite(n) ? n : 10));
+    // linear map: 1 -> slow, 10 -> fast
+    const t = (s - 1) / 9; // 0..1
+    return Math.round(SPEED_DELAY_SLOW + (SPEED_DELAY_FAST - SPEED_DELAY_SLOW) * t);
   }
 
   function drawLineNow(cmd) {
-    const a = toCanvas(cmd.x1, cmd.y1);
-    const b = toCanvas(cmd.x2, cmd.y2);
+    const a = toCanvasXY(cmd.x1, cmd.y1);
+    const b = toCanvasXY(cmd.x2, cmd.y2);
     ctx.strokeStyle = cmd.color || "#00ff66";
     ctx.lineWidth = Number(cmd.width || 2);
     ctx.lineCap = "round";
@@ -275,6 +320,40 @@
     step();
   }
 
+  /* ---------- Turtle cursor state + drawing ---------- */
+  const turtleState = {
+    x: 0, y: 0, heading: 0,
+    visible: true,
+    color: "#00ff66"
+  };
+
+  function redrawTurtle() {
+    overlayClear();
+    if (!turtleState.visible) return;
+
+    const p = toCanvasXY(turtleState.x, turtleState.y);
+
+    // Triangle points (turtle-style: heading 0 = east)
+    const size = 12;
+    const ang = (turtleState.heading * Math.PI) / 180;
+
+    // triangle points relative to heading
+    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
+    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
+    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
+
+    octx.beginPath();
+    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
+    octx.lineTo(p.cx + left.x, p.cy + left.y);
+    octx.lineTo(p.cx + right.x, p.cy + right.y);
+    octx.closePath();
+
+    octx.fillStyle = turtleState.color || "#00ff66";
+    octx.globalAlpha = 0.9;
+    octx.fill();
+    octx.globalAlpha = 1;
+  }
+
   function handleCanvasCmd(cmd) {
     if (!cmd || !cmd.type) return;
 
@@ -283,6 +362,7 @@
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
       canvasClear();
+      redrawTurtle();
       return;
     }
 
@@ -290,6 +370,7 @@
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
       canvasClear();
+      redrawTurtle();
       return;
     }
 
@@ -298,10 +379,17 @@
       scheduleQueue();
       return;
     }
-  }
 
-  window.addEventListener("resize", () => { cm.refresh(); fitCanvas(); });
-  fitCanvas();
+    if (cmd.type === "turtle") {
+      turtleState.x = Number(cmd.x) || 0;
+      turtleState.y = Number(cmd.y) || 0;
+      turtleState.heading = Number(cmd.heading) || 0;
+      turtleState.visible = !!cmd.visible;
+      turtleState.color = cmd.pencolor || turtleState.color;
+      redrawTurtle();
+      return;
+    }
+  }
 
   /* ---------- Console helpers ---------- */
   function scrollConsole() { consoleEl.scrollTop = consoleEl.scrollHeight; }
@@ -457,7 +545,6 @@
     if (running || waitingForInput) {
       cancelInputIfAny();
 
-      // stop any pending turtle animation
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
 
@@ -686,9 +773,10 @@
   runBtn.onclick = () => {
     clearConsole();
 
-    // reset turtle drawing queue + canvas immediately
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
+
+    // clear immediately
     handleCanvasCmd({ type: "bg", color: "#111111" });
     handleCanvasCmd({ type: "clear" });
 
