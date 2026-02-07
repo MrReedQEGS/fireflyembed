@@ -203,6 +203,51 @@
   });
   cm.setSize(null, "100%");
 
+  /* ---------- Geometry helpers ---------- */
+  function toCanvasXY(x, y) {
+    const rect = canvas.getBoundingClientRect();
+    return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
+  }
+
+  /* ---------- Turtle cursor state + drawing (MUST be defined early) ---------- */
+  const turtleState = {
+    x: 0, y: 0, heading: 0,
+    visible: true,
+    color: "#00ff66"
+  };
+
+  function overlayClear() {
+    const rect = overlay.getBoundingClientRect();
+    octx.clearRect(0, 0, rect.width, rect.height);
+  }
+
+  function redrawTurtle() {
+    overlayClear();
+    if (!turtleState.visible) return;
+
+    const p = toCanvasXY(turtleState.x, turtleState.y);
+
+    // Heading: 0 = east
+    const size = 12;
+    const ang = (turtleState.heading * Math.PI) / 180;
+
+    // tip forward, base behind
+    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
+    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
+    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
+
+    octx.beginPath();
+    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
+    octx.lineTo(p.cx + left.x, p.cy + left.y);
+    octx.lineTo(p.cx + right.x, p.cy + right.y);
+    octx.closePath();
+
+    octx.fillStyle = turtleState.color || "#00ff66";
+    octx.globalAlpha = 0.9;
+    octx.fill();
+    octx.globalAlpha = 1;
+  }
+
   /* ---------- Splitter (drag resize) ---------- */
   let dragging = false;
   function setLeftWidth(px) {
@@ -214,7 +259,7 @@
     leftPane.style.flex = `0 0 ${clamped}px`;
     rightPane.style.flex = `1 1 0`;
     cm.refresh();
-    fitCanvases();
+    fitCanvases(true);
   }
   splitter.addEventListener("pointerdown", (e) => {
     dragging = true;
@@ -234,7 +279,7 @@
     document.body.style.userSelect = "";
   });
 
-  /* ---------- Canvas sizing + coordinate system ---------- */
+  /* ---------- Canvas sizing ---------- */
   function fitOneCanvas(c, context) {
     const rect = c.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -243,47 +288,37 @@
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  function fitCanvases() {
-    fitOneCanvas(canvas, ctx);
-    fitOneCanvas(overlay, octx);
-    canvasClear();
-    redrawTurtle();
-  }
-
   function canvasClear() {
     const rect = canvas.getBoundingClientRect();
     ctx.fillStyle = currentBg;
     ctx.fillRect(0, 0, rect.width, rect.height);
   }
 
-  function overlayClear() {
-    const rect = overlay.getBoundingClientRect();
-    octx.clearRect(0, 0, rect.width, rect.height);
+  // If preserveDrawing=false, we clear (used at startup). If true, we don't wipe drawings (used on resize drag).
+  function fitCanvases(preserveDrawing=false) {
+    // NOTE: resizing a canvas clears it; so if you want perfect persistence on resize, we'd need to snapshot + redraw.
+    // For now: preserveDrawing only avoids calling canvasClear() again; but the browser will clear on resize anyway.
+    fitOneCanvas(canvas, ctx);
+    fitOneCanvas(overlay, octx);
+    if (!preserveDrawing) canvasClear();
+    redrawTurtle();
   }
 
-  function toCanvasXY(x, y) {
-    const rect = canvas.getBoundingClientRect();
-    return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
-  }
-
-  window.addEventListener("resize", () => { cm.refresh(); fitCanvases(); });
-  fitCanvases();
+  window.addEventListener("resize", () => { cm.refresh(); fitCanvases(false); });
+  fitCanvases(false);
 
   /* ---------- Turtle animation queue (speed) ---------- */
   const drawQueue = [];
   let drawTimer = null;
 
-  // Even spacing 1..10, with 1 very slow and 10 very fast.
-  // Tune these two numbers if you want it slower/faster overall.
+  // evenly spaced 1..10 where 1 is slow, 10 fast; 0 instant
   const SPEED_DELAY_SLOW = 450; // speed(1)
   const SPEED_DELAY_FAST = 12;  // speed(10)
 
   function speedToDelay(speed) {
     const n = Number(speed);
     if (n === 0) return 0;
-
     const s = Math.max(1, Math.min(10, Number.isFinite(n) ? n : 10));
-    // linear map: 1 -> slow, 10 -> fast
     const t = (s - 1) / 9; // 0..1
     return Math.round(SPEED_DELAY_SLOW + (SPEED_DELAY_FAST - SPEED_DELAY_SLOW) * t);
   }
@@ -309,49 +344,17 @@
       const delay = speedToDelay(cmd.speed);
 
       drawLineNow(cmd);
+      // turtle cursor should remain visible above drawings
+      redrawTurtle();
 
       if (delay === 0) {
-        step(); // drain immediately
+        step();
       } else {
         drawTimer = setTimeout(() => { drawTimer = null; step(); }, delay);
       }
     };
 
     step();
-  }
-
-  /* ---------- Turtle cursor state + drawing ---------- */
-  const turtleState = {
-    x: 0, y: 0, heading: 0,
-    visible: true,
-    color: "#00ff66"
-  };
-
-  function redrawTurtle() {
-    overlayClear();
-    if (!turtleState.visible) return;
-
-    const p = toCanvasXY(turtleState.x, turtleState.y);
-
-    // Triangle points (turtle-style: heading 0 = east)
-    const size = 12;
-    const ang = (turtleState.heading * Math.PI) / 180;
-
-    // triangle points relative to heading
-    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
-    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
-    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
-
-    octx.beginPath();
-    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
-    octx.lineTo(p.cx + left.x, p.cy + left.y);
-    octx.lineTo(p.cx + right.x, p.cy + right.y);
-    octx.closePath();
-
-    octx.fillStyle = turtleState.color || "#00ff66";
-    octx.globalAlpha = 0.9;
-    octx.fill();
-    octx.globalAlpha = 1;
   }
 
   function handleCanvasCmd(cmd) {
@@ -533,9 +536,7 @@
         setStatus("Error");
         writeln(String(m.text ?? ""));
       }
-      if (m.type === "input_request") {
-        beginInput(m.prompt ?? "");
-      }
+      if (m.type === "input_request") beginInput(m.prompt ?? "");
     };
     w.postMessage({ type: "init" });
     return w;
@@ -559,12 +560,10 @@
   }
 
   stopBtn.addEventListener("click", () => stopExecution("Stopped"));
-
   worker = makeWorker();
 
   async function loadProgram(file) {
     stopExecution("Stopped");
-
     removeCaret();
     clearConsole();
     setStatus("Loading " + file + "…");
@@ -776,7 +775,6 @@
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
 
-    // clear immediately
     handleCanvasCmd({ type: "bg", color: "#111111" });
     handleCanvasCmd({ type: "clear" });
 
