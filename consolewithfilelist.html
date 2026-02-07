@@ -72,6 +72,7 @@
   <select id="program" disabled></select>
 
   <button id="run" disabled>Run ▶</button>
+  <button id="reload" disabled>Reload ↻</button>
   <button id="clear" disabled>Clear</button>
 
   <div class="spacer"></div>
@@ -96,6 +97,7 @@
   import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
 
   const runBtn = document.getElementById("run");
+  const reloadBtn = document.getElementById("reload");
   const clearBtn = document.getElementById("clear");
   const statusEl = document.getElementById("status");
   const consoleEl = document.getElementById("console");
@@ -104,7 +106,7 @@
 
   const setStatus = (s) => statusEl.textContent = s;
 
-  /* ---------- Console helpers (UNCHANGED CORE) ---------- */
+  /* ---------- Console helpers (core) ---------- */
   function scrollConsole() { consoleEl.scrollTop = consoleEl.scrollHeight; }
   function removeCaret() { consoleEl.querySelector(".caret")?.remove(); }
   function renderCaret() {
@@ -139,7 +141,7 @@
   });
   cm.setSize(null, "100%");
 
-  /* ---------- Inline input (UNCHANGED CORE) ---------- */
+  /* ---------- Inline input (core) ---------- */
   let inputActive = false;
   let inputBuffer = "";
   let inputResolve = null;
@@ -188,7 +190,7 @@
     return ["async def __main__():", ...i, "", "await __main__()"].join("\n");
   }
 
-  /* ---------- Program loader (JSON-driven) ---------- */
+  /* ---------- Program loader (JSON) ---------- */
   async function loadProgramList() {
     const res = await fetch("./programs.json", { cache: "no-store" });
     const files = await res.json();
@@ -211,9 +213,20 @@
     cm.setValue(await res.text());
     filenameEl.textContent = file;
     setStatus("Ready");
+    consoleEl.focus();
   }
 
   programSel.addEventListener("change", () => loadProgram(programSel.value));
+
+  /* ---------- Reload with confirmation ---------- */
+  reloadBtn.addEventListener("click", async () => {
+    const ok = confirm(
+      "Reloading will discard any changes you have made.\n\nAre you sure you want to reload this program?"
+    );
+    if (!ok) return;
+
+    await loadProgram(programSel.value);
+  });
 
   /* ---------- Pyodide ---------- */
   setStatus("Loading Python…");
@@ -234,6 +247,7 @@ builtins.input = _input
   await loadProgram(first);
 
   runBtn.disabled = false;
+  reloadBtn.disabled = false;
   clearBtn.disabled = false;
   programSel.disabled = false;
 
