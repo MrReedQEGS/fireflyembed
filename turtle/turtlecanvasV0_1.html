@@ -232,30 +232,70 @@
     return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
   }
 
+  // --- Turtle animation queue (for speed()) ---
+  const drawQueue = [];
+  let drawTimer = null;
+
+  function speedToDelay(speed) {
+    if (speed === 0 || speed === "0") return 0;
+    const s = Math.max(1, Math.min(10, Number(speed) || 10));
+    // 1 -> ~120ms, 10 -> ~10ms
+    return Math.round(130 - s * 12);
+  }
+
+  function drawLineNow(cmd) {
+    const a = toCanvas(cmd.x1, cmd.y1);
+    const b = toCanvas(cmd.x2, cmd.y2);
+    ctx.strokeStyle = cmd.color || "#00ff66";
+    ctx.lineWidth = Number(cmd.width || 2);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(a.cx, a.cy);
+    ctx.lineTo(b.cx, b.cy);
+    ctx.stroke();
+  }
+
+  function scheduleQueue() {
+    if (drawTimer) return;
+
+    const step = () => {
+      if (!drawQueue.length) { drawTimer = null; return; }
+      const cmd = drawQueue.shift();
+      const delay = speedToDelay(cmd.speed);
+
+      drawLineNow(cmd);
+
+      if (delay === 0) {
+        step(); // drain immediately
+      } else {
+        drawTimer = setTimeout(() => { drawTimer = null; step(); }, delay);
+      }
+    };
+
+    step();
+  }
+
   function handleCanvasCmd(cmd) {
     if (!cmd || !cmd.type) return;
 
     if (cmd.type === "bg") {
       currentBg = cmd.color || "#111111";
+      if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
+      drawQueue.length = 0;
       canvasClear();
       return;
     }
 
     if (cmd.type === "clear") {
+      if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
+      drawQueue.length = 0;
       canvasClear();
       return;
     }
 
     if (cmd.type === "line") {
-      const a = toCanvas(cmd.x1, cmd.y1);
-      const b = toCanvas(cmd.x2, cmd.y2);
-      ctx.strokeStyle = cmd.color || "#00ff66";
-      ctx.lineWidth = Number(cmd.width || 2);
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(a.cx, a.cy);
-      ctx.lineTo(b.cx, b.cy);
-      ctx.stroke();
+      drawQueue.push(cmd);
+      scheduleQueue();
       return;
     }
   }
@@ -416,6 +456,11 @@
   function stopExecution(reason = "Stopped") {
     if (running || waitingForInput) {
       cancelInputIfAny();
+
+      // stop any pending turtle animation
+      if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
+      drawQueue.length = 0;
+
       writeln("\nProgram stopped by user.");
       try { worker?.terminate(); } catch {}
       worker = makeWorker();
@@ -641,7 +686,9 @@
   runBtn.onclick = () => {
     clearConsole();
 
-    // visually reset canvas immediately
+    // reset turtle drawing queue + canvas immediately
+    if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
+    drawQueue.length = 0;
     handleCanvasCmd({ type: "bg", color: "#111111" });
     handleCanvasCmd({ type: "clear" });
 
