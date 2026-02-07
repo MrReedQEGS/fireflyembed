@@ -10,11 +10,6 @@
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
 
-  <!-- xterm.js -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.css">
-  <script src="https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.10.0/lib/xterm-addon-fit.js"></script>
-
   <style>
     body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
     header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
@@ -30,8 +25,8 @@
     #editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; }
 
-    /* terminal pane */
-    #terminalWrap { flex: 1; min-height: 0; }
+    /* Terminal pane */
+    #terminalWrap { flex: 1; min-height: 0; background: #0b0b0b; }
     #terminal { width: 100%; height: 100%; }
   </style>
 </head>
@@ -59,16 +54,20 @@
 <script type="module">
   import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
 
+  // ✅ xterm as ESM (no global Terminal needed)
+  import { Terminal } from "https://cdn.jsdelivr.net/npm/xterm@5.5.0/+esm";
+  import { FitAddon } from "https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.10.0/+esm";
+  import "https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.css";
+
   const runBtn = document.getElementById("run");
   const clearBtn = document.getElementById("clear");
   const statusEl = document.getElementById("status");
+  const setStatus = (s) => (statusEl.textContent = s);
 
-  const setStatus = (s) => statusEl.textContent = s;
-
-  // --- Editor (CodeMirror 5)
+  // --- CodeMirror
   if (!window.CodeMirror) {
-    setStatus("Editor failed (CodeMirror not loaded)");
-    throw new Error("CodeMirror missing (CDN blocked?)");
+    setStatus("Editor failed");
+    throw new Error("CodeMirror not loaded (CDN blocked?)");
   }
   const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
     mode: "python",
@@ -79,53 +78,44 @@
   cm.setSize(null, "100%");
 
   async function loadInitialCode() {
-    try {
-      const res = await fetch("./main.py", { cache: "no-store" });
-      if (!res.ok) throw new Error(`Could not load main.py (HTTP ${res.status})`);
-      cm.setValue(await res.text());
-    } catch (e) {
-      cm.setValue(`print("main.py missing")\nname = input("Your name? ")\nprint("Hi", name)\n`);
-      term.writeln(String(e));
-    }
+    const res = await fetch("./main.py", { cache: "no-store" });
+    if (!res.ok) throw new Error(`Could not load main.py (HTTP ${res.status})`);
+    cm.setValue(await res.text());
   }
 
-  // --- Terminal (xterm)
+  // --- Terminal
   const term = new Terminal({
     convertEol: true,
     cursorBlink: true,
+    fontSize: 14,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-    fontSize: 14
   });
-  const fitAddon = new FitAddon.FitAddon();
-  term.loadAddon(fitAddon);
+  const fit = new FitAddon();
+  term.loadAddon(fit);
   term.open(document.getElementById("terminal"));
-  fitAddon.fit();
+  fit.fit();
+  window.addEventListener("resize", () => fit.fit());
 
-  window.addEventListener("resize", () => fitAddon.fit());
+  clearBtn.onclick = () => term.reset();
 
-  function termClear() {
-    term.reset();
-  }
-
-  clearBtn.onclick = termClear;
-
-  // --- Console-style input IN the terminal (single window)
+  // --- Terminal line input (single window, Trinket-like)
   let inputActive = false;
   let inputBuffer = "";
   let inputResolver = null;
 
-  function enableTerminalInput(promptText) {
+  function termInput(promptText) {
     inputActive = true;
     inputBuffer = "";
-    if (promptText) term.write(promptText);
-    // now user types on same line
-    return new Promise((resolve) => { inputResolver = resolve; });
+    if (promptText) term.write(String(promptText));
+    return new Promise((resolve) => (inputResolver = resolve));
   }
 
-  function disableTerminalInput() {
+  function finishInput(line) {
+    const resolve = inputResolver;
     inputActive = false;
     inputBuffer = "";
     inputResolver = null;
+    if (resolve) resolve(line);
   }
 
   term.onData((data) => {
@@ -134,10 +124,7 @@
     // Enter
     if (data === "\r") {
       term.write("\r\n");
-      const line = inputBuffer;
-      const resolve = inputResolver;
-      disableTerminalInput();
-      if (resolve) resolve(line);
+      finishInput(inputBuffer);
       return;
     }
 
@@ -145,7 +132,6 @@
     if (data === "\u007F") {
       if (inputBuffer.length > 0) {
         inputBuffer = inputBuffer.slice(0, -1);
-        // erase one char visually
         term.write("\b \b");
       }
       return;
@@ -154,9 +140,7 @@
     // Ctrl+C
     if (data === "\u0003") {
       term.write("^C\r\n");
-      const resolve = inputResolver;
-      disableTerminalInput();
-      if (resolve) resolve(""); // treat as empty input
+      finishInput("");
       return;
     }
 
@@ -172,31 +156,33 @@
   setStatus("Loading Python…");
   const pyodide = await loadPyodide();
 
-  // stdout/stderr -> terminal
   pyodide.setStdout({ batched: (s) => term.writeln(s) });
   pyodide.setStderr({ batched: (s) => term.writeln(s) });
 
-  // Provide async input() that reads from terminal
-  pyodide.globals.set("__term_input__", enableTerminalInput);
+  // Provide async input() backed by terminal
+  pyodide.globals.set("__term_input__", termInput);
 
   await pyodide.runPythonAsync(`
 import builtins
-
 async def _input(prompt=""):
     return await __term_input__(str(prompt))
-
 builtins.input = _input
   `.trim());
 
-  // Wrap user code so plain input() becomes await input()
+  // Wrap code so plain input() becomes await input()
   function wrapUserCode(src) {
-    // IMPORTANT: regex literal with normal escapes
     const transformed = src.replace(/(^|[^\w.])input\s*\(/g, "$1await input(");
     const indented = transformed.split("\n").map(l => "    " + l);
     return ["async def __main__():", ...indented, "", "await __main__()"].join("\n");
   }
 
-  await loadInitialCode();
+  // Load initial code
+  try {
+    await loadInitialCode();
+  } catch (e) {
+    term.writeln(String(e));
+    cm.setValue(`print("main.py missing")\nname = input("Your name? ")\nprint("Hi", name)\n`);
+  }
 
   setStatus("Ready");
   runBtn.disabled = false;
@@ -205,10 +191,6 @@ builtins.input = _input
   runBtn.onclick = async () => {
     runBtn.disabled = true;
     setStatus("Running…");
-
-    // make terminal feel fresh per run (optional)
-    // termClear();
-
     try {
       await pyodide.runPythonAsync(wrapUserCode(cm.getValue()));
       setStatus("Done");
@@ -217,10 +199,10 @@ builtins.input = _input
       term.writeln(String(e));
     } finally {
       runBtn.disabled = false;
+      term.focus();
     }
   };
 
-  // focus terminal when user clicks console pane
   document.getElementById("terminalWrap").addEventListener("mousedown", () => term.focus());
   term.focus();
 </script>
