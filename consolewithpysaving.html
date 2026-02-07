@@ -13,42 +13,86 @@
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/comment/comment.js"></script>
 
   <style>
-    body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
-    header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-family: system-ui, sans-serif;
+    }
+
+    header {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #ddd;
+    }
+
     #status { color: #666; font-size: 14px; }
     .spacer { flex: 1; }
-    button { padding: 8px 12px; cursor: pointer; }
+    button { padding: 6px 12px; cursor: pointer; }
 
     select {
-      padding: 8px 10px;
+      padding: 6px 10px;
       border: 1px solid #ccc;
       border-radius: 8px;
       background: white;
       font-size: 14px;
     }
 
-    #app { flex: 1; display: flex; min-height: 0; }
-    #left, #right { width: 50%; display: flex; flex-direction: column; min-height: 0; }
+    #app {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+
+    #left, #right {
+      width: 50%;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
     #left { border-right: 1px solid #ddd; }
-    .pane-title { padding: 8px 12px; font-size: 14px; color: #444; border-bottom: 1px solid #eee; }
+
+    .pane-title {
+      padding: 6px 12px;
+      font-size: 14px;
+      color: #444;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pane-title .spacer { flex: 1; }
 
     /* Editor */
     #editorWrap { flex: 1; min-height: 0; }
-    .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
+    .CodeMirror {
+      height: 100% !important;
+      font-size: 14px;
+      line-height: 1.4;
+    }
     .CodeMirror-gutters { border-right: 1px solid #eee; }
 
     /* Console */
-    #consoleWrap { flex: 1; min-height: 0; background: #0b0b0b; }
+    #consoleWrap {
+      flex: 1;
+      min-height: 0;
+      background: #0b0b0b;
+    }
+
     #console {
       height: 100%;
       padding: 12px;
       overflow: auto;
       color: #eaeaea;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 14px;
       line-height: 1.4;
       white-space: pre-wrap;
-      word-break: break-word;
       outline: none;
       cursor: text;
     }
@@ -59,9 +103,9 @@
       margin-left: 1px;
       background: #eaeaea;
       animation: blink 1s steps(1) infinite;
-      vertical-align: -2px;
       height: 1em;
     }
+
     @keyframes blink { 50% { opacity: 0; } }
   </style>
 </head>
@@ -73,11 +117,7 @@
 
   <button id="run" disabled>Run ▶</button>
   <button id="reload" disabled>Reload ↻</button>
-
-  <!-- ✅ NEW: Download button -->
-  <button id="download" disabled>Download .txt</button>
-
-  <button id="clear" disabled>Clear</button>
+  <button id="download" disabled>Download</button>
 
   <div class="spacer"></div>
   <div id="status">Loading…</div>
@@ -90,7 +130,11 @@
   </section>
 
   <section id="right">
-    <div class="pane-title">Console</div>
+    <div class="pane-title">
+      <span>Console</span>
+      <div class="spacer"></div>
+      <button id="clear" disabled>Clear console</button>
+    </div>
     <div id="consoleWrap">
       <div id="console" tabindex="0"></div>
     </div>
@@ -103,7 +147,7 @@
   const runBtn = document.getElementById("run");
   const reloadBtn = document.getElementById("reload");
   const clearBtn = document.getElementById("clear");
-  const downloadBtn = document.getElementById("download"); // ✅ NEW
+  const downloadBtn = document.getElementById("download");
   const statusEl = document.getElementById("status");
   const consoleEl = document.getElementById("console");
   const programSel = document.getElementById("program");
@@ -111,7 +155,7 @@
 
   const setStatus = (s) => statusEl.textContent = s;
 
-  /* ---------- Console helpers (core) ---------- */
+  /* ---------- Console helpers ---------- */
   function scrollConsole() { consoleEl.scrollTop = consoleEl.scrollHeight; }
   function removeCaret() { consoleEl.querySelector(".caret")?.remove(); }
   function renderCaret() {
@@ -146,7 +190,7 @@
   });
   cm.setSize(null, "100%");
 
-  /* ---------- Inline input (core) ---------- */
+  /* ---------- Inline input ---------- */
   let inputActive = false;
   let inputBuffer = "";
   let inputResolve = null;
@@ -195,10 +239,9 @@
     return ["async def __main__():", ...i, "", "await __main__()"].join("\n");
   }
 
-  /* ---------- Program list + originals cache ---------- */
+  /* ---------- Program loading + dirty check ---------- */
   let currentFile = null;
   let previousSelectValue = null;
-
   const originals = new Map();
 
   function getEditorText() {
@@ -222,23 +265,12 @@
 
   async function loadProgramList() {
     const res = await fetch("./programs.json", { cache: "no-store" });
-    if (!res.ok) throw new Error(`programs.json not found (HTTP ${res.status})`);
     const files = await res.json();
-
     programSel.innerHTML = "";
     for (const f of files) {
-      const opt = document.createElement("option");
-      opt.value = f;
-      opt.textContent = f;
-      programSel.appendChild(opt);
+      programSel.add(new Option(f, f));
     }
     return files[0];
-  }
-
-  async function fetchProgramText(file) {
-    const res = await fetch("./" + file, { cache: "no-store" });
-    if (!res.ok) throw new Error(`${file} not found (HTTP ${res.status})`);
-    return await res.text();
   }
 
   async function loadProgram(file) {
@@ -251,7 +283,9 @@
 
     setStatus("Loading " + file + "…");
 
-    const text = await fetchProgramText(file);
+    const res = await fetch("./" + file, { cache: "no-store" });
+    const text = await res.text();
+
     originals.set(file, text);
     currentFile = file;
 
@@ -273,37 +307,24 @@
       return;
     }
 
-    try {
-      await loadProgram(nextFile);
-    } catch (e) {
-      setStatus("Load error");
-      writeln(String(e));
-      programSel.value = previousSelectValue ?? currentFile ?? nextFile;
-    }
+    await loadProgram(nextFile);
   });
 
   reloadBtn.addEventListener("click", async () => {
     if (!confirmDiscardIfDirty("Reloading")) return;
-
-    try {
-      await loadProgram(programSel.value);
-    } catch (e) {
-      setStatus("Load error");
-      writeln(String(e));
-    }
+    await loadProgram(programSel.value);
   });
 
-  /* ---------- ✅ NEW: Download .txt (no impact on runtime) ---------- */
+  /* ---------- Download ---------- */
   downloadBtn.addEventListener("click", () => {
-    // Use currentFile if available; fall back to filename label
-    let base = currentFile || (filenameEl.textContent || "program");
+    let base = currentFile || "program";
     base = base.replace(/\.py$/i, "");
-    const downloadName = base + ".txt";
+    const name = base + ".txt";
 
     const blob = new Blob([cm.getValue()], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = downloadName;
+    a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
   });
@@ -323,17 +344,15 @@ async def _input(prompt=""):
 builtins.input = _input
   `);
 
-  // UI ready
   runBtn.disabled = false;
   reloadBtn.disabled = false;
   clearBtn.disabled = false;
   programSel.disabled = false;
-  downloadBtn.disabled = false; // ✅ NEW
+  downloadBtn.disabled = false;
 
   const first = await loadProgramList();
   await loadProgram(first);
 
-  /* ---------- Run ---------- */
   runBtn.onclick = async () => {
     runBtn.disabled = true;
     setStatus("Running…");
