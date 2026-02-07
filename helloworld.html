@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PyScript Run Button</title>
+    <title>PyScript Run Button + input()</title>
 
-    <!-- Modern PyScript (pinned version) -->
+    <!-- Modern PyScript (pin a version) -->
     <link rel="stylesheet" href="https://pyscript.net/releases/2025.11.1/core.css" />
     <script type="module" src="https://pyscript.net/releases/2025.11.1/core.js"></script>
   </head>
@@ -13,25 +13,26 @@
   <body>
     <h1>Run Python with input()</h1>
 
-    <!-- Terminal for print() and input() -->
+    <!-- Interactive terminal (interactive when code runs in a worker) -->
     <py-terminal></py-terminal>
 
-    <!-- Run button -->
-    <button id="run">Run Python</button>
+    <button id="run">Run program</button>
 
-    <!-- Python code (loaded but NOT auto-run) -->
+    <!-- Start a worker, load main.py, but DON'T run anything at import time -->
     <script
       type="py"
       src="./main.py"
-      terminal
       worker
-      id="pycode">
+      terminal
+      name="prog">
     </script>
 
     <script>
-      document.getElementById("run").onclick = () => {
-        pyscript.run("pycode");
-      };
+      document.getElementById("run").addEventListener("click", async () => {
+        // Get the named worker and call the exported function
+        const w = await pyscript.workers["prog"];
+        await w.run_program();
+      });
     </script>
   </body>
 </html>
