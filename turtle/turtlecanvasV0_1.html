@@ -1,0 +1,333 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Python + Turtle (Trinket-style)</title>
+
+  <!-- CodeMirror 5 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
+
+  <style>
+    body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
+    header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
+    #status { color: #666; font-size: 14px; }
+    .spacer { flex: 1; }
+    button { padding: 6px 12px; cursor: pointer; }
+
+    #app { flex: 1; display: flex; min-height: 0; width: 100%; }
+
+    #left, #right { display: flex; flex-direction: column; min-height: 0; flex: 1 1 0; }
+    #left { border-right: 1px solid #ddd; min-width: 260px; }
+
+    .pane-title {
+      padding: 6px 12px;
+      font-size: 14px;
+      color: #444;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pane-title .spacer { flex: 1; }
+
+    #editorWrap { flex: 1; min-height: 0; }
+    .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
+
+    /* Right side: canvas on top, console below */
+    #stageWrap { flex: 1; min-height: 0; background: #111; display: flex; }
+    #stage {
+      margin: 12px;
+      border: 1px solid #333;
+      background: #111;
+      width: 100%;
+      height: 100%;
+    }
+
+    #consoleWrap { height: 220px; background: #0b0b0b; border-top: 1px solid #222; }
+    #console {
+      height: 100%;
+      padding: 12px;
+      overflow: auto;
+      color: #eaeaea;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      outline: none;
+      cursor: text;
+      box-sizing: border-box;
+    }
+    .caret {
+      display: inline-block;
+      width: 8px;
+      margin-left: 1px;
+      background: #eaeaea;
+      animation: blink 1s steps(1) infinite;
+      height: 1em;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+</head>
+
+<body>
+<header>
+  <button id="run" disabled>Run ▶</button>
+  <button id="stop" disabled>Stop ■</button>
+  <button id="clear" disabled>Clear console</button>
+  <div class="spacer"></div>
+  <div id="status">Loading…</div>
+</header>
+
+<div id="app">
+  <section id="left">
+    <div class="pane-title">Editor</div>
+    <div id="editorWrap"><textarea id="editor"></textarea></div>
+  </section>
+
+  <section id="right">
+    <div class="pane-title">Turtle</div>
+    <div id="stageWrap">
+      <canvas id="stage"></canvas>
+    </div>
+
+    <div class="pane-title">
+      <span>Console</span>
+      <div class="spacer"></div>
+    </div>
+    <div id="consoleWrap">
+      <div id="console" tabindex="0"></div>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+  const runBtn = document.getElementById("run");
+  const stopBtn = document.getElementById("stop");
+  const clearBtn = document.getElementById("clear");
+  const statusEl = document.getElementById("status");
+  const consoleEl = document.getElementById("console");
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+
+  const setStatus = (s) => statusEl.textContent = s;
+
+  /* ---------- CodeMirror ---------- */
+  const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
+    mode: "python",
+    lineNumbers: true,
+    indentUnit: 4,
+    tabSize: 4,
+    smartIndent: true,
+  });
+  cm.setSize(null, "100%");
+
+  cm.setValue(
+`import turtle
+
+turtle.bgcolor("#111111")
+turtle.pencolor("#00ff66")
+turtle.pensize(3)
+
+for i in range(4):
+    turtle.forward(120)
+    turtle.left(90)
+
+name = input("Your name? ")
+print("Hello", name)
+`);
+
+  /* ---------- Console ---------- */
+  let inputActive = false;
+  let inputBuffer = "";
+  let waitingForInput = false;
+
+  function scrollConsole() { consoleEl.scrollTop = consoleEl.scrollHeight; }
+  function removeCaret() { consoleEl.querySelector(".caret")?.remove(); }
+  function renderCaret() { removeCaret(); const c=document.createElement("span"); c.className="caret"; consoleEl.appendChild(c); }
+  function write(s="") { removeCaret(); consoleEl.textContent += s; if (inputActive) renderCaret(); scrollConsole(); }
+  function writeln(s="") { write(s + "\n"); }
+  function clearConsole() { consoleEl.textContent = ""; }
+
+  clearBtn.onclick = () => { clearConsole(); consoleEl.focus(); };
+
+  function beginInput(prompt) {
+    inputActive = true;
+    inputBuffer = "";
+    waitingForInput = true;
+    if (prompt) write(String(prompt));
+    renderCaret();
+    consoleEl.focus();
+  }
+
+  function cancelInputIfAny() {
+    if (!waitingForInput) return;
+    inputActive = false;
+    waitingForInput = false;
+    removeCaret();
+    worker?.postMessage({ type: "input_response", text: "" });
+  }
+
+  consoleEl.addEventListener("keydown", (e) => {
+    if (!inputActive) return;
+    e.preventDefault();
+    if (e.key === "Enter") {
+      write("\n");
+      inputActive = false;
+      waitingForInput = false;
+      removeCaret();
+      worker?.postMessage({ type: "input_response", text: inputBuffer });
+    } else if (e.key === "Backspace") {
+      if (inputBuffer.length) {
+        inputBuffer = inputBuffer.slice(0, -1);
+        removeCaret();
+        consoleEl.textContent = consoleEl.textContent.slice(0, -1);
+        renderCaret();
+      }
+    } else if (e.key.length === 1) {
+      inputBuffer += e.key;
+      write(e.key);
+    }
+  });
+
+  consoleEl.addEventListener("mousedown", () => consoleEl.focus());
+
+  /* ---------- Canvas sizing + coordinate system ---------- */
+  function fitCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // default background
+    ctx.fillStyle = "#111111";
+    ctx.fillRect(0, 0, rect.width, rect.height);
+  }
+
+  function toCanvas(x, y) {
+    // turtle coordinates: (0,0) center, +y up
+    const rect = canvas.getBoundingClientRect();
+    return {
+      cx: rect.width / 2 + x,
+      cy: rect.height / 2 - y
+    };
+  }
+
+  window.addEventListener("resize", () => { fitCanvas(); });
+  fitCanvas();
+
+  function canvasClear() {
+    const rect = canvas.getBoundingClientRect();
+    ctx.fillStyle = currentBg;
+    ctx.fillRect(0, 0, rect.width, rect.height);
+  }
+
+  let currentBg = "#111111";
+
+  function handleCanvasCmd(cmd) {
+    if (!cmd || !cmd.type) return;
+
+    if (cmd.type === "bg") {
+      currentBg = cmd.color || "#111111";
+      canvasClear();
+      return;
+    }
+
+    if (cmd.type === "clear") {
+      canvasClear();
+      return;
+    }
+
+    if (cmd.type === "line") {
+      const a = toCanvas(cmd.x1, cmd.y1);
+      const b = toCanvas(cmd.x2, cmd.y2);
+      ctx.strokeStyle = cmd.color || "#00ff66";
+      ctx.lineWidth = Number(cmd.width || 2);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.cx, a.cy);
+      ctx.lineTo(b.cx, b.cy);
+      ctx.stroke();
+      return;
+    }
+  }
+
+  /* ---------- Worker run control ---------- */
+  let worker = null;
+  let running = false;
+
+  function makeWorker() {
+    const w = new Worker("./py_worker.js", { type: "module" });
+    w.onmessage = (ev) => {
+      const m = ev.data || {};
+      if (m.type === "stdout") writeln(m.text ?? "");
+      if (m.type === "stderr") writeln(m.text ?? "");
+      if (m.type === "status") setStatus(m.text ?? "");
+      if (m.type === "canvas_cmd") handleCanvasCmd(m);
+      if (m.type === "ready") {
+        setStatus("Ready");
+        runBtn.disabled = false;
+        stopBtn.disabled = true;
+        clearBtn.disabled = false;
+      }
+      if (m.type === "done") {
+        running = false;
+        runBtn.disabled = false;
+        stopBtn.disabled = true;
+        setStatus("Done");
+      }
+      if (m.type === "error") {
+        running = false;
+        runBtn.disabled = false;
+        stopBtn.disabled = true;
+        setStatus("Error");
+        writeln(String(m.text ?? ""));
+      }
+      if (m.type === "input_request") {
+        beginInput(m.prompt ?? "");
+      }
+      if (m.type === "canvas_cmd") {
+        handleCanvasCmd(m);
+      }
+    };
+    w.postMessage({ type: "init" });
+    return w;
+  }
+
+  function stopExecution(reason = "Stopped") {
+    if (running || waitingForInput) {
+      cancelInputIfAny();
+      writeln("\nProgram stopped by user.");
+      try { worker?.terminate(); } catch {}
+      worker = makeWorker();
+      running = false;
+      runBtn.disabled = false;
+      stopBtn.disabled = true;
+      setStatus(reason);
+    }
+  }
+
+  stopBtn.onclick = () => stopExecution("Stopped");
+
+  worker = makeWorker();
+
+  runBtn.onclick = () => {
+    clearConsole();
+    // reset canvas visually immediately
+    handleCanvasCmd({ type: "clear" });
+    handleCanvasCmd({ type: "bg", color: "#111111" });
+
+    running = true;
+    runBtn.disabled = true;
+    stopBtn.disabled = false;
+    setStatus("Running…");
+    worker.postMessage({ type: "run", code: cm.getValue() });
+    consoleEl.focus();
+  };
+
+  consoleEl.focus();
+</script>
+</body>
+</html>
