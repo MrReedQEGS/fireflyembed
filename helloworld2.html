@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Python Runner (CodeMirror 5 + Pyodide)</title>
 
-  <!-- CodeMirror 5 (reliable CDN) -->
+  <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
@@ -15,14 +15,10 @@
     header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
     #status { color: #666; font-size: 14px; }
     .spacer { flex: 1; }
-
     #app { flex: 1; display: flex; min-height: 0; }
     #left, #right { width: 50%; display: flex; flex-direction: column; min-height: 0; }
     #left { border-right: 1px solid #ddd; }
-
     .pane-title { padding: 8px 12px; font-size: 14px; color: #444; border-bottom: 1px solid #eee; }
-
-    /* IMPORTANT: give CodeMirror a height */
     #editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; }
 
@@ -81,46 +77,31 @@
   const clearOut = () => { consoleEl.textContent = ""; };
   clearBtn.onclick = clearOut;
 
-  // Show JS errors in the console panel too
-  window.addEventListener("error", (e) => writeln("JS error: " + (e.message || e.error || e)));
-  window.addEventListener("unhandledrejection", (e) => writeln("JS promise rejection: " + e.reason));
-
   function setStatus(s) { statusEl.textContent = s; }
 
-  // 1) Create CodeMirror editor (fail loudly if CodeMirror didn't load)
-  let cm;
-  try {
-    if (!window.CodeMirror) throw new Error("CodeMirror failed to load (CDN blocked?)");
-    cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
-      mode: "python",
-      lineNumbers: true,
-      indentUnit: 4,
-      tabSize: 4,
-    });
-    cm.setSize(null, "100%");
-  } catch (e) {
+  // Editor
+  if (!window.CodeMirror) {
     setStatus("Editor failed");
-    writeln(String(e));
-    // Don't proceed; without editor it's not useful
-    throw e;
+    writeln("CodeMirror failed to load (CDN blocked?)");
+    throw new Error("CodeMirror missing");
   }
+  const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
+    mode: "python",
+    lineNumbers: true,
+    indentUnit: 4,
+    tabSize: 4,
+  });
+  cm.setSize(null, "100%");
 
-  // 2) Load main.py into editor
+  // Load main.py into editor
   async function loadInitialCode() {
     setStatus("Loading main.py…");
-    try {
-      const res = await fetch("./main.py", { cache: "no-store" });
-      if (!res.ok) throw new Error(`Could not load main.py (HTTP ${res.status})`);
-      cm.setValue(await res.text());
-      setStatus("Loaded main.py");
-    } catch (e) {
-      cm.setValue(`print("main.py not found beside index.html")\nname = input("Your name? ")\nprint("Hi", name)\n`);
-      setStatus("main.py missing");
-      writeln(String(e));
-    }
+    const res = await fetch("./main.py", { cache: "no-store" });
+    if (!res.ok) throw new Error(`Could not load main.py (HTTP ${res.status})`);
+    cm.setValue(await res.text());
   }
 
-  // 3) Console-style stdin (no popups)
+  // Console-style input
   let stdinResolver = null;
   function requestInput(promptText) {
     stdinPromptEl.textContent = promptText ?? "";
@@ -132,7 +113,7 @@
   stdinEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && stdinResolver) {
       const value = stdinEl.value;
-      writeln(value);              // echo input like a terminal
+      writeln(value);
       stdinRow.style.display = "none";
       const resolve = stdinResolver;
       stdinResolver = null;
@@ -140,39 +121,40 @@
     }
   });
 
-  // 4) Load Pyodide and patch input()
-  setStatus("Loading Python (Pyodide)…");
-  let pyodide;
-  try {
-    pyodide = await loadPyodide();
-    pyodide.setStdout({ batched: (s) => writeln(s) });
-    pyodide.setStderr({ batched: (s) => writeln(s) });
+  // Pyodide
+  setStatus("Loading Python…");
+  const pyodide = await loadPyodide();
+  pyodide.setStdout({ batched: (s) => writeln(s) });
+  pyodide.setStderr({ batched: (s) => writeln(s) });
 
-    pyodide.globals.set("__stdin_request__", requestInput);
-    await pyodide.runPythonAsync(`
+  pyodide.globals.set("__stdin_request__", requestInput);
+  await pyodide.runPythonAsync(`
 import builtins
 async def _input(prompt=""):
     return await __stdin_request__(str(prompt))
 builtins.input = _input
-    `.trim());
+  `.trim());
 
-    setStatus("Ready");
-    runBtn.disabled = false;
-    clearBtn.disabled = false;
-  } catch (e) {
-    setStatus("Pyodide failed");
-    writeln(String(e));
-    throw e;
-  }
-
-  // 5) Wrap user code so input() can be awaited (user still types input() normally)
+  // Wrap user code so input() can be awaited
   function wrapUserCode(src) {
-    const transformed = src.replace(/(^|[^\\w.])input\\s*\\(/g, "$1await input(");
+    // ✅ FIXED REGEX:
+    const transformed = src.replace(/(^|[^\w.])input\s*\(/g, "$1await input(");
     const indented = transformed.split("\n").map(l => "    " + l);
     return ["async def __main__():", ...indented, "", "await __main__()"].join("\n");
   }
 
-  await loadInitialCode();
+  try {
+    await loadInitialCode();
+    setStatus("Ready");
+    runBtn.disabled = false;
+    clearBtn.disabled = false;
+  } catch (e) {
+    setStatus("main.py missing");
+    writeln(String(e));
+    cm.setValue(`print("main.py not found")\nname = input("Your name? ")\nprint("Hi", name)\n`);
+    runBtn.disabled = false;
+    clearBtn.disabled = false;
+  }
 
   runBtn.onclick = async () => {
     clearOut();
