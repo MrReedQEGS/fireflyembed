@@ -1,65 +1,63 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trinket-like Python Runner</title>
-
-  <!-- CodeMirror 5 -->
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
-  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
-
-  <!-- xterm.js (KNOWN-GOOD URLs) -->
-  <link rel="stylesheet"
-        href="https://unpkg.com/xterm@5.5.0/css/xterm.css">
-  <script src="https://unpkg.com/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://unpkg.com/xterm-addon-fit@0.10.0/lib/xterm-addon-fit.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Python Runner (Console-style)</title>
 
   <style>
-    body {
-      margin: 0;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      font-family: system-ui, sans-serif;
-    }
-    header {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      padding: 10px 12px;
-      border-bottom: 1px solid #ddd;
-    }
+    body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
+    header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
     #status { color: #666; font-size: 14px; }
     .spacer { flex: 1; }
     button { padding: 8px 12px; cursor: pointer; }
 
-    #app {
-      flex: 1;
-      display: flex;
-      min-height: 0;
-    }
-    #left, #right {
-      width: 50%;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
+    #app { flex: 1; display: flex; min-height: 0; }
+    #left, #right { width: 50%; display: flex; flex-direction: column; min-height: 0; }
     #left { border-right: 1px solid #ddd; }
-    .pane-title {
-      padding: 8px 12px;
+    .pane-title { padding: 8px 12px; font-size: 14px; color: #444; border-bottom: 1px solid #eee; }
+
+    /* Editor (simple textarea — reliable) */
+    textarea {
+      flex: 1;
+      width: 100%;
+      border: 0;
+      outline: none;
+      resize: none;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-size: 14px;
-      color: #444;
-      border-bottom: 1px solid #eee;
+      line-height: 1.4;
     }
 
-    #editorWrap { flex: 1; min-height: 0; }
-    .CodeMirror { height: 100% !important; }
+    /* Console */
+    #consoleWrap { flex: 1; min-height: 0; background: #0b0b0b; }
+    #console {
+      height: 100%;
+      padding: 12px;
+      overflow: auto;
+      color: #eaeaea;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      outline: none;
+      cursor: text;
+      user-select: text;
+    }
 
-    #terminalWrap { flex: 1; min-height: 0; background: #0b0b0b; }
-    #terminal { width: 100%; height: 100%; }
+    /* Fake caret */
+    .caret {
+      display: inline-block;
+      width: 8px;
+      margin-left: 1px;
+      background: #eaeaea;
+      animation: blink 1s steps(1) infinite;
+      vertical-align: -2px;
+      height: 1em;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
   </style>
 </head>
 
@@ -68,21 +66,19 @@
   <button id="run" disabled>Run ▶</button>
   <button id="clear" disabled>Clear</button>
   <div class="spacer"></div>
-  <div id="status">Starting…</div>
+  <div id="status">Loading Python…</div>
 </header>
 
 <div id="app">
   <section id="left">
     <div class="pane-title">main.py</div>
-    <div id="editorWrap">
-      <textarea id="editor"></textarea>
-    </div>
+    <textarea id="code" spellcheck="false"></textarea>
   </section>
 
   <section id="right">
-    <div class="pane-title">Console</div>
-    <div id="terminalWrap">
-      <div id="terminal"></div>
+    <div class="pane-title">Console (click here and type when prompted)</div>
+    <div id="consoleWrap">
+      <div id="console" tabindex="0"></div>
     </div>
   </section>
 </div>
@@ -93,112 +89,135 @@
   const runBtn = document.getElementById("run");
   const clearBtn = document.getElementById("clear");
   const statusEl = document.getElementById("status");
-  const setStatus = (s) => statusEl.textContent = s;
+  const codeEl = document.getElementById("code");
+  const consoleEl = document.getElementById("console");
 
-  /* ---------- Editor ---------- */
-  if (!window.CodeMirror) {
-    setStatus("CodeMirror failed to load");
-    throw new Error("CodeMirror missing");
+  const setStatus = (s) => (statusEl.textContent = s);
+
+  function scrollConsoleToBottom() {
+    consoleEl.scrollTop = consoleEl.scrollHeight;
   }
 
-  const cm = CodeMirror.fromTextArea(
-    document.getElementById("editor"),
-    {
-      mode: "python",
-      lineNumbers: true,
-      indentUnit: 4,
-      tabSize: 4
-    }
-  );
-  cm.setSize(null, "100%");
-
-  /* ---------- Terminal ---------- */
-  if (!window.Terminal) {
-    setStatus("xterm failed to load");
-    throw new Error("Terminal missing");
+  function clearConsole() {
+    consoleEl.textContent = "";
   }
 
-  const term = new window.Terminal({
-    convertEol: true,
-    cursorBlink: true,
-    fontSize: 14,
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
-  });
+  function writeToConsole(s) {
+    // Remove caret if present, write, then restore caret if we’re in input mode
+    removeCaret();
+    consoleEl.textContent += s;
+    if (inputActive) renderCaret();
+    scrollConsoleToBottom();
+  }
 
-  const fitAddon = new window.FitAddon.FitAddon();
-  term.loadAddon(fitAddon);
-  term.open(document.getElementById("terminal"));
-  fitAddon.fit();
-  window.addEventListener("resize", () => fitAddon.fit());
+  function writelnToConsole(s) {
+    writeToConsole((s ?? "") + "\n");
+  }
 
-  clearBtn.onclick = () => term.reset();
+  clearBtn.onclick = () => {
+    clearConsole();
+    consoleEl.focus();
+  };
 
-  /* ---------- Load main.py ---------- */
+  // --- Load initial main.py into editor
   async function loadInitialCode() {
     try {
       const res = await fetch("./main.py", { cache: "no-store" });
-      if (!res.ok) throw new Error("main.py not found");
-      cm.setValue(await res.text());
-    } catch {
-      cm.setValue(
-`print("Hello!")
+      if (!res.ok) throw new Error(`main.py not found (HTTP ${res.status})`);
+      codeEl.value = await res.text();
+    } catch (e) {
+      codeEl.value =
+`print("Welcome!")
 name = input("Your name? ")
-print("Hi", name)
-`
-      );
+print("Hello,", name)
+`;
+      writelnToConsole(String(e));
     }
   }
 
-  /* ---------- Terminal input handling ---------- */
+  // --- Inline console input (single window)
+  let inputActive = false;
   let inputBuffer = "";
-  let inputResolver = null;
+  let inputResolve = null;
 
-  function terminalInput(prompt) {
-    if (prompt) term.write(prompt);
-    inputBuffer = "";
-    return new Promise(resolve => inputResolver = resolve);
+  function removeCaret() {
+    const caret = consoleEl.querySelector(".caret");
+    if (caret) caret.remove();
   }
 
-  term.onData(data => {
-    if (!inputResolver) return;
+  function renderCaret() {
+    removeCaret();
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    consoleEl.appendChild(caret);
+  }
 
-    if (data === "\r") {
-      term.write("\r\n");
-      inputResolver(inputBuffer);
-      inputResolver = null;
+  function beginInput(promptText) {
+    inputActive = true;
+    inputBuffer = "";
+    if (promptText) writeToConsole(String(promptText));
+    renderCaret();
+    consoleEl.focus();
+
+    return new Promise((resolve) => {
+      inputResolve = resolve;
+    });
+  }
+
+  function finishInput() {
+    inputActive = false;
+    removeCaret();
+    const resolve = inputResolve;
+    inputResolve = null;
+    if (resolve) resolve(inputBuffer);
+  }
+
+  consoleEl.addEventListener("keydown", (e) => {
+    if (!inputActive) return;
+
+    // Prevent page scrolling on space etc.
+    e.preventDefault();
+
+    if (e.key === "Enter") {
+      writeToConsole("\n");
+      finishInput();
       return;
     }
-    if (data === "\u007F") {
+
+    if (e.key === "Backspace") {
       if (inputBuffer.length > 0) {
         inputBuffer = inputBuffer.slice(0, -1);
-        term.write("\b \b");
+
+        // Remove last character from console text (before caret)
+        removeCaret();
+        const t = consoleEl.textContent;
+        consoleEl.textContent = t.slice(0, -1);
+        renderCaret();
+        scrollConsoleToBottom();
       }
       return;
     }
-    if (data < " ") return;
 
-    inputBuffer += data;
-    term.write(data);
+    // Basic Ctrl+C behavior: cancel input, return empty line
+    if (e.ctrlKey && (e.key === "c" || e.key === "C")) {
+      writeToConsole("^C\n");
+      inputBuffer = "";
+      finishInput();
+      return;
+    }
+
+    // Printable characters
+    if (e.key.length === 1 && !e.metaKey && !e.altKey) {
+      inputBuffer += e.key;
+      writeToConsole(e.key);
+    }
   });
 
-  /* ---------- Pyodide ---------- */
-  setStatus("Loading Python…");
-  const pyodide = await loadPyodide();
+  consoleEl.addEventListener("mousedown", () => consoleEl.focus());
 
-  pyodide.setStdout({ batched: s => term.writeln(s) });
-  pyodide.setStderr({ batched: s => term.writeln(s) });
-
-  pyodide.globals.set("__term_input__", terminalInput);
-
-  await pyodide.runPythonAsync(`
-import builtins
-async def _input(prompt=""):
-    return await __term_input__(str(prompt))
-builtins.input = _input
-`);
-
+  // --- Transform: allow students to write normal input(), but we run it async
   function wrapUserCode(src) {
+    // Turn input(...) into await input(...)
     const transformed = src.replace(/(^|[^\w.])input\s*\(/g, "$1await input(");
     const indented = transformed.split("\n").map(l => "    " + l);
     return [
@@ -208,6 +227,33 @@ builtins.input = _input
       "await __main__()"
     ].join("\n");
   }
+
+  // --- Load Pyodide
+  setStatus("Loading Python…");
+  let pyodide;
+  try {
+    pyodide = await loadPyodide();
+  } catch (e) {
+    setStatus("Pyodide failed to load");
+    writelnToConsole(String(e));
+    throw e;
+  }
+
+  // stdout/stderr -> our console
+  pyodide.setStdout({ batched: (s) => writelnToConsole(s) });
+  pyodide.setStderr({ batched: (s) => writelnToConsole(s) });
+
+  // Provide async input() backed by our console
+  pyodide.globals.set("__console_input__", beginInput);
+
+  await pyodide.runPythonAsync(`
+import builtins
+
+async def _input(prompt=""):
+    return await __console_input__(str(prompt))
+
+builtins.input = _input
+  `.trim());
 
   await loadInitialCode();
 
@@ -219,18 +265,26 @@ builtins.input = _input
     runBtn.disabled = true;
     setStatus("Running…");
     try {
-      await pyodide.runPythonAsync(wrapUserCode(cm.getValue()));
+      // Start run on a clean line if caret/typing was mid-state
+      if (inputActive) {
+        // If somehow already waiting for input, cancel it
+        inputBuffer = ""
+        finishInput();
+      }
+      removeCaret();
+
+      await pyodide.runPythonAsync(wrapUserCode(codeEl.value));
       setStatus("Done");
     } catch (e) {
-      term.writeln(String(e));
       setStatus("Error");
+      writelnToConsole(String(e));
     } finally {
       runBtn.disabled = false;
-      term.focus();
+      consoleEl.focus();
     }
   };
 
-  term.focus();
+  consoleEl.focus();
 </script>
 </body>
 </html>
