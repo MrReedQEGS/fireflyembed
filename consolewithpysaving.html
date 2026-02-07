@@ -10,38 +10,57 @@
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/comment/comment.js"></script>
 
   <style>
     body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
     header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
     #status { color: #666; font-size: 14px; }
     .spacer { flex: 1; }
-    button, select { padding: 8px 12px; cursor: pointer; }
+    button { padding: 8px 12px; cursor: pointer; }
+
+    select {
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: white;
+      font-size: 14px;
+    }
 
     #app { flex: 1; display: flex; min-height: 0; }
     #left, #right { width: 50%; display: flex; flex-direction: column; min-height: 0; }
     #left { border-right: 1px solid #ddd; }
-
     .pane-title { padding: 8px 12px; font-size: 14px; color: #444; border-bottom: 1px solid #eee; }
 
-    .CodeMirror { height: 100% !important; font-size: 14px; }
+    /* Editor */
+    #editorWrap { flex: 1; min-height: 0; }
+    .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
+    .CodeMirror-gutters { border-right: 1px solid #eee; }
 
+    /* Console */
+    #consoleWrap { flex: 1; min-height: 0; background: #0b0b0b; }
     #console {
-      flex: 1;
-      background: #0b0b0b;
-      color: #eaeaea;
+      height: 100%;
       padding: 12px;
-      font-family: ui-monospace, monospace;
-      white-space: pre-wrap;
       overflow: auto;
+      color: #eaeaea;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
       outline: none;
+      cursor: text;
     }
 
     .caret {
       display: inline-block;
       width: 8px;
+      margin-left: 1px;
       background: #eaeaea;
       animation: blink 1s steps(1) infinite;
+      vertical-align: -2px;
+      height: 1em;
     }
     @keyframes blink { 50% { opacity: 0; } }
   </style>
@@ -49,13 +68,13 @@
 
 <body>
 <header>
-  <label>Program:</label>
+  <label style="font-size:14px;color:#444;">Program:</label>
   <select id="program" disabled></select>
 
   <button id="run" disabled>Run ▶</button>
   <button id="reload" disabled>Reload ↻</button>
   <button id="download" disabled>Download .txt</button>
-  <button id="upload" disabled>Upload .txt / .py</button>
+  <button id="clear" disabled>Clear</button>
 
   <div class="spacer"></div>
   <div id="status">Loading…</div>
@@ -63,187 +82,4 @@
 
 <div id="app">
   <section id="left">
-    <div class="pane-title" id="filename">Editor</div>
-    <textarea id="editor"></textarea>
-  </section>
-
-  <section id="right">
-    <div class="pane-title">Console</div>
-    <div id="console" tabindex="0"></div>
-  </section>
-</div>
-
-<!-- accepts BOTH .txt and .py -->
-<input type="file" id="fileInput" accept=".txt,.py" style="display:none" />
-
-<script type="module">
-  import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
-
-  const programSel = document.getElementById("program");
-  const runBtn = document.getElementById("run");
-  const reloadBtn = document.getElementById("reload");
-  const downloadBtn = document.getElementById("download");
-  const uploadBtn = document.getElementById("upload");
-  const statusEl = document.getElementById("status");
-  const consoleEl = document.getElementById("console");
-  const fileInput = document.getElementById("fileInput");
-  const filenameEl = document.getElementById("filename");
-
-  const setStatus = s => statusEl.textContent = s;
-
-  /* ---------- Console (core unchanged) ---------- */
-  let inputActive = false, inputBuffer = "", inputResolve = null;
-
-  function write(s="") {
-    consoleEl.textContent += s;
-    consoleEl.scrollTop = consoleEl.scrollHeight;
-  }
-  function writeln(s="") { write(s + "\n"); }
-  function clearConsole() { consoleEl.textContent = ""; }
-
-  function beginInput(prompt="") {
-    inputActive = true;
-    inputBuffer = "";
-    write(prompt);
-    return new Promise(r => inputResolve = r);
-  }
-  function finishInput() {
-    inputActive = false;
-    inputResolve?.(inputBuffer);
-    inputResolve = null;
-  }
-
-  consoleEl.addEventListener("keydown", e => {
-    if (!inputActive) return;
-    e.preventDefault();
-    if (e.key === "Enter") { writeln(); finishInput(); }
-    else if (e.key === "Backspace") {
-      if (inputBuffer.length) {
-        inputBuffer = inputBuffer.slice(0, -1);
-        consoleEl.textContent = consoleEl.textContent.slice(0, -1);
-      }
-    }
-    else if (e.key.length === 1) { inputBuffer += e.key; write(e.key); }
-  });
-
-  /* ---------- Editor ---------- */
-  const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
-    mode: "python",
-    lineNumbers: true,
-    indentUnit: 4,
-    matchBrackets: true
-  });
-
-  /* ---------- Program tracking ---------- */
-  const originals = new Map();
-  let currentFile = null;
-
-  function isDirty() {
-    return currentFile && cm.getValue() !== originals.get(currentFile);
-  }
-
-  function confirmDiscard(action) {
-    if (!isDirty()) return true;
-    return confirm(`${action} will discard your changes.\n\nAre you sure?`);
-  }
-
-  async function loadProgram(file) {
-    if (!confirmDiscard("Loading")) return;
-    clearConsole();
-    const res = await fetch("./" + file, { cache: "no-store" });
-    const text = await res.text();
-    originals.set(file, text);
-    currentFile = file;
-    cm.setValue(text);
-    filenameEl.textContent = file;
-    setStatus("Ready");
-  }
-
-  /* ---------- Upload (.txt OR .py → treated as Python) ---------- */
-  uploadBtn.onclick = () => {
-    if (!confirmDiscard("Uploading")) return;
-    fileInput.value = "";
-    fileInput.click();
-  };
-
-  fileInput.onchange = async () => {
-    const file = fileInput.files[0];
-    if (!file) return;
-
-    const text = await file.text();
-    clearConsole();
-    cm.setValue(text);
-
-    // show name but treat as Python internally
-    filenameEl.textContent = file.name + " (uploaded)";
-    setStatus("Ready");
-  };
-
-  /* ---------- Download (.py → .txt) ---------- */
-  downloadBtn.onclick = () => {
-    let base = currentFile || "program";
-    base = base.replace(/\.py$/i, "");
-    const filename = base + ".txt";
-
-    const blob = new Blob([cm.getValue()], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  /* ---------- Reload (reloads original .py) ---------- */
-  reloadBtn.onclick = () => {
-    if (!confirmDiscard("Reloading")) return;
-    loadProgram(currentFile);
-  };
-
-  /* ---------- Pyodide ---------- */
-  setStatus("Loading Python…");
-  const pyodide = await loadPyodide();
-
-  pyodide.setStdout({ batched: s => writeln(s) });
-  pyodide.setStderr({ batched: s => writeln(s) });
-  pyodide.globals.set("__console_input__", beginInput);
-  await pyodide.runPythonAsync(`
-import builtins
-async def _input(prompt=""):
-    return await __console_input__(str(prompt))
-builtins.input = _input
-  `);
-
-  /* ---------- Init ---------- */
-  const files = await (await fetch("./programs.json")).json();
-  for (const f of files) programSel.add(new Option(f, f));
-  await loadProgram(files[0]);
-
-  programSel.onchange = () => loadProgram(programSel.value);
-
-  runBtn.onclick = async () => {
-    setStatus("Running…");
-    try {
-      const code = cm.getValue()
-        .replace(/(^|[^\\w.])input\\s*\\(/g, "$1await input(");
-      const wrapped =
-        "async def __main__():\n" +
-        code.split("\n").map(l => "    " + l).join("\n") +
-        "\nawait __main__()";
-      await pyodide.runPythonAsync(wrapped);
-      setStatus("Done");
-    } catch (e) {
-      writeln(String(e));
-      setStatus("Error");
-    }
-  };
-
-  programSel.disabled =
-  runBtn.disabled =
-  reloadBtn.disabled =
-  downloadBtn.disabled =
-  uploadBtn.disabled = false;
-
-  consoleEl.focus();
-</script>
-</body>
-</html>
+    <div class="pane-title" id="filename">
