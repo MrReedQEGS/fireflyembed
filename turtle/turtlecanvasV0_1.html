@@ -53,35 +53,29 @@
     .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
     .CodeMirror-gutters { border-right: 1px solid #eee; }
 
-    /* Right pane layout: Turtle canvas on top, console below */
+    /* Turtle stage */
     #stageWrap {
       flex: 1;
       min-height: 0;
       background: #111;
       position: relative;
-      display: flex;
     }
 
-    /* Base drawing canvas */
-    #stage {
-      margin: 12px;
-      width: calc(100% - 24px);
-      height: calc(100% - 24px);
-      border: 1px solid #333;
-      background: #111;
-      display: block;
-    }
-
-    /* Overlay canvas for turtle triangle (same size, transparent) */
-    #overlay {
+    #stage, #overlay {
       position: absolute;
       left: 12px;
       top: 12px;
-      right: 12px;
-      bottom: 12px;
-      pointer-events: none;
+      width: calc(100% - 24px);
+      height: calc(100% - 24px);
+      border: 1px solid #333;
+      display: block;
+      box-sizing: border-box;
     }
 
+    #stage { background: #111; z-index: 1; }
+    #overlay { z-index: 5; pointer-events: none; }
+
+    /* Console */
     #consoleWrap { height: 240px; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
     #console {
       height: 100%;
@@ -179,12 +173,10 @@
 
   const canvas = document.getElementById("stage");
   const ctx = canvas.getContext("2d");
-
   const overlay = document.getElementById("overlay");
   const octx = overlay.getContext("2d");
 
   let currentBg = "#111111";
-
   const setStatus = (s) => statusEl.textContent = s;
   const hasFS = ("showOpenFilePicker" in window) && ("showSaveFilePicker" in window);
 
@@ -203,51 +195,6 @@
   });
   cm.setSize(null, "100%");
 
-  /* ---------- Geometry helpers ---------- */
-  function toCanvasXY(x, y) {
-    const rect = canvas.getBoundingClientRect();
-    return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
-  }
-
-  /* ---------- Turtle cursor state + drawing (MUST be defined early) ---------- */
-  const turtleState = {
-    x: 0, y: 0, heading: 0,
-    visible: true,
-    color: "#00ff66"
-  };
-
-  function overlayClear() {
-    const rect = overlay.getBoundingClientRect();
-    octx.clearRect(0, 0, rect.width, rect.height);
-  }
-
-  function redrawTurtle() {
-    overlayClear();
-    if (!turtleState.visible) return;
-
-    const p = toCanvasXY(turtleState.x, turtleState.y);
-
-    // Heading: 0 = east
-    const size = 12;
-    const ang = (turtleState.heading * Math.PI) / 180;
-
-    // tip forward, base behind
-    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
-    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
-    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
-
-    octx.beginPath();
-    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
-    octx.lineTo(p.cx + left.x, p.cy + left.y);
-    octx.lineTo(p.cx + right.x, p.cy + right.y);
-    octx.closePath();
-
-    octx.fillStyle = turtleState.color || "#00ff66";
-    octx.globalAlpha = 0.9;
-    octx.fill();
-    octx.globalAlpha = 1;
-  }
-
   /* ---------- Splitter (drag resize) ---------- */
   let dragging = false;
   function setLeftWidth(px) {
@@ -259,7 +206,7 @@
     leftPane.style.flex = `0 0 ${clamped}px`;
     rightPane.style.flex = `1 1 0`;
     cm.refresh();
-    fitCanvases(true);
+    fitCanvases();
   }
   splitter.addEventListener("pointerdown", (e) => {
     dragging = true;
@@ -279,6 +226,47 @@
     document.body.style.userSelect = "";
   });
 
+  /* ---------- Turtle cursor state + drawing ---------- */
+  const turtleState = {
+    x: 0, y: 0, heading: 0,
+    visible: true,
+    color: "#00ff66"
+  };
+
+  function toCanvasXY(x, y) {
+    const rect = canvas.getBoundingClientRect();
+    return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
+  }
+
+  function overlayClear() {
+    const rect = overlay.getBoundingClientRect();
+    octx.clearRect(0, 0, rect.width, rect.height);
+  }
+
+  function redrawTurtle() {
+    overlayClear();
+    if (!turtleState.visible) return;
+
+    const p = toCanvasXY(turtleState.x, turtleState.y);
+    const size = 12;
+    const ang = (turtleState.heading * Math.PI) / 180;
+
+    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
+    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
+    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
+
+    octx.beginPath();
+    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
+    octx.lineTo(p.cx + left.x, p.cy + left.y);
+    octx.lineTo(p.cx + right.x, p.cy + right.y);
+    octx.closePath();
+
+    octx.fillStyle = turtleState.color || "#00ff66";
+    octx.globalAlpha = 0.9;
+    octx.fill();
+    octx.globalAlpha = 1;
+  }
+
   /* ---------- Canvas sizing ---------- */
   function fitOneCanvas(c, context) {
     const rect = c.getBoundingClientRect();
@@ -294,24 +282,28 @@
     ctx.fillRect(0, 0, rect.width, rect.height);
   }
 
-  // If preserveDrawing=false, we clear (used at startup). If true, we don't wipe drawings (used on resize drag).
-  function fitCanvases(preserveDrawing=false) {
-    // NOTE: resizing a canvas clears it; so if you want perfect persistence on resize, we'd need to snapshot + redraw.
-    // For now: preserveDrawing only avoids calling canvasClear() again; but the browser will clear on resize anyway.
+  function fitCanvases() {
     fitOneCanvas(canvas, ctx);
     fitOneCanvas(overlay, octx);
-    if (!preserveDrawing) canvasClear();
+    // don't auto-clear drawings here; only clear on explicit commands
     redrawTurtle();
   }
 
-  window.addEventListener("resize", () => { cm.refresh(); fitCanvases(false); });
-  fitCanvases(false);
+  // IMPORTANT: iframe/layout-safe sizing (run after layout)
+  function fitAfterLayout() {
+    requestAnimationFrame(() => {
+      fitCanvases();
+      requestAnimationFrame(() => fitCanvases());
+    });
+  }
+
+  window.addEventListener("resize", () => { cm.refresh(); fitAfterLayout(); });
+  fitAfterLayout();
 
   /* ---------- Turtle animation queue (speed) ---------- */
   const drawQueue = [];
   let drawTimer = null;
 
-  // evenly spaced 1..10 where 1 is slow, 10 fast; 0 instant
   const SPEED_DELAY_SLOW = 450; // speed(1)
   const SPEED_DELAY_FAST = 12;  // speed(10)
 
@@ -319,7 +311,7 @@
     const n = Number(speed);
     if (n === 0) return 0;
     const s = Math.max(1, Math.min(10, Number.isFinite(n) ? n : 10));
-    const t = (s - 1) / 9; // 0..1
+    const t = (s - 1) / 9;
     return Math.round(SPEED_DELAY_SLOW + (SPEED_DELAY_FAST - SPEED_DELAY_SLOW) * t);
   }
 
@@ -344,7 +336,6 @@
       const delay = speedToDelay(cmd.speed);
 
       drawLineNow(cmd);
-      // turtle cursor should remain visible above drawings
       redrawTurtle();
 
       if (delay === 0) {
@@ -508,15 +499,16 @@
   let running = false;
 
   function makeWorker() {
-    const w = new Worker("./py_worker.js", { type: "module" });
+    // cache-bust worker in case ChromeOS keeps old one
+    const w = new Worker("./py_worker.js?v=cursor1", { type: "module" });
+
     w.onmessage = (ev) => {
       const m = ev.data || {};
-
       if (m.type === "stdout") writeln(m.text ?? "");
       if (m.type === "stderr") writeln(m.text ?? "");
       if (m.type === "status") setStatus(m.text ?? "");
-
       if (m.type === "canvas_cmd") handleCanvasCmd(m.cmd);
+      if (m.type === "input_request") beginInput(m.prompt ?? "");
 
       if (m.type === "ready") {
         setStatus("Ready");
@@ -536,8 +528,8 @@
         setStatus("Error");
         writeln(String(m.text ?? ""));
       }
-      if (m.type === "input_request") beginInput(m.prompt ?? "");
     };
+
     w.postMessage({ type: "init" });
     return w;
   }
@@ -775,8 +767,12 @@
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
 
-    handleCanvasCmd({ type: "bg", color: "#111111" });
-    handleCanvasCmd({ type: "clear" });
+    // reset visuals
+    currentBg = "#111111";
+    canvasClear();
+    turtleState.visible = true;
+    turtleState.x = 0; turtleState.y = 0; turtleState.heading = 0;
+    redrawTurtle();
 
     if (!worker) worker = makeWorker();
     running = true;
