@@ -190,10 +190,39 @@
     return ["async def __main__():", ...i, "", "await __main__()"].join("\n");
   }
 
-  /* ---------- Program loader (JSON) ---------- */
+  /* ---------- Program list + originals cache ---------- */
+  let currentFile = null;
+  let previousSelectValue = null;
+
+  // Cache original text exactly as loaded from GitHub Pages
+  // Map: filename -> string
+  const originals = new Map();
+
+  function getEditorText() {
+    // Normalize newlines so Windows/Mac differences don’t cause false “changed”
+    return cm.getValue().replace(/\r\n/g, "\n");
+  }
+  function getOriginalText(file) {
+    const t = originals.get(file);
+    return (t ?? "").replace(/\r\n/g, "\n");
+  }
+  function isDirtyAgainstOriginal() {
+    if (!currentFile) return false;
+    return getEditorText() !== getOriginalText(currentFile);
+  }
+
+  function confirmDiscardIfDirty(actionName) {
+    if (!isDirtyAgainstOriginal()) return true;
+    return confirm(
+      `${actionName} will discard your changes to "${currentFile}".\n\nAre you sure?`
+    );
+  }
+
   async function loadProgramList() {
     const res = await fetch("./programs.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`programs.json not found (HTTP ${res.status})`);
     const files = await res.json();
+
     programSel.innerHTML = "";
     for (const f of files) {
       const opt = document.createElement("option");
@@ -204,28 +233,70 @@
     return files[0];
   }
 
+  async function fetchProgramText(file) {
+    const res = await fetch("./" + file, { cache: "no-store" });
+    if (!res.ok) throw new Error(`${file} not found (HTTP ${res.status})`);
+    return await res.text();
+  }
+
   async function loadProgram(file) {
-    if (inputActive) finishInput();
+    // cancel any waiting input and reset UI
+    if (inputActive) {
+      inputBuffer = "";
+      finishInput();
+    }
+    removeCaret();
     clearConsole();
+
     setStatus("Loading " + file + "…");
 
-    const res = await fetch("./" + file, { cache: "no-store" });
-    cm.setValue(await res.text());
+    const text = await fetchProgramText(file);
+    originals.set(file, text);          // store “original” for this file
+    currentFile = file;
+
+    cm.setValue(text);
     filenameEl.textContent = file;
+
+    // Keep dropdown in sync
+    programSel.value = file;
+    previousSelectValue = file;
+
     setStatus("Ready");
     consoleEl.focus();
   }
 
-  programSel.addEventListener("change", () => loadProgram(programSel.value));
+  /* ---------- Dropdown change with conditional confirm ---------- */
+  programSel.addEventListener("change", async () => {
+    const nextFile = programSel.value;
 
-  /* ---------- Reload with confirmation ---------- */
+    // Ask ONLY if current file has edits
+    if (!confirmDiscardIfDirty("Switching programs")) {
+      // revert selection if user cancels
+      programSel.value = previousSelectValue ?? currentFile ?? nextFile;
+      return;
+    }
+
+    try {
+      await loadProgram(nextFile);
+    } catch (e) {
+      setStatus("Load error");
+      writeln(String(e));
+      // revert selection on failure too
+      programSel.value = previousSelectValue ?? currentFile ?? nextFile;
+    }
+  });
+
+  /* ---------- Reload button with conditional confirm ---------- */
   reloadBtn.addEventListener("click", async () => {
-    const ok = confirm(
-      "Reloading will discard any changes you have made.\n\nAre you sure you want to reload this program?"
-    );
-    if (!ok) return;
+    // Ask ONLY if there are edits vs original
+    if (!confirmDiscardIfDirty("Reloading")) return;
 
-    await loadProgram(programSel.value);
+    try {
+      await loadProgram(programSel.value);
+    } catch (e) {
+      setStatus("Load error");
+      writeln(String(e));
+    }
   });
 
   /* ---------- Pyodide ---------- */
@@ -243,14 +314,17 @@ async def _input(prompt=""):
 builtins.input = _input
   `);
 
-  const first = await loadProgramList();
-  await loadProgram(first);
-
+  // UI ready
   runBtn.disabled = false;
   reloadBtn.disabled = false;
   clearBtn.disabled = false;
   programSel.disabled = false;
 
+  // Load first program
+  const first = await loadProgramList();
+  await loadProgram(first);
+
+  /* ---------- Run ---------- */
   runBtn.onclick = async () => {
     runBtn.disabled = true;
     setStatus("Running…");
