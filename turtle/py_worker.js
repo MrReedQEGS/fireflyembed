@@ -23,10 +23,10 @@ async function ensurePyodide() {
     return new Promise(resolve => { pendingInputResolve = resolve; });
   });
 
-  // Canvas bridge: worker -> UI drawing commands
-  pyodide.globals.set("__canvas_post__", (obj) => {
-    // obj is a JS proxy; make a plain JSON-ish object
-    post("canvas_cmd", obj.toJs ? obj.toJs() : obj);
+  // Canvas bridge: Python -> worker JS -> UI
+  pyodide.globals.set("__canvas_cmd__", (obj) => {
+    const cmd = obj?.toJs ? obj.toJs() : obj;
+    post("canvas_cmd", { cmd });
   });
 
   // Install async input
@@ -37,26 +37,25 @@ async def _input(prompt=""):
 builtins.input = _input
   `);
 
-  // Install a minimal browser "turtle" compatible module
+  // Install minimal browser turtle module named "turtle"
   await pyodide.runPythonAsync(`
-import math, types
+import math, types, sys
 
-# send a canvas command to the UI
 def _cmd(**kwargs):
-    __canvas_post__(kwargs)
+    __canvas_cmd__(kwargs)
 
 class _WebTurtle:
     def __init__(self):
         self.x = 0.0
         self.y = 0.0
         self.heading = 0.0   # degrees, 0 = east
-        self.pendown = True
-        self.pencolor = "#00ff66"
-        self.pensize = 2
+        self._pendown = True
+        self._pencolor = "#00ff66"
+        self._pensize = 2.0
 
     def _line_to(self, nx, ny):
-        if self.pendown:
-            _cmd(type="line", x1=self.x, y1=self.y, x2=nx, y2=ny, color=self.pencolor, width=self.pensize)
+        if self._pendown:
+            _cmd(type="line", x1=self.x, y1=self.y, x2=nx, y2=ny, color=self._pencolor, width=self._pensize)
         self.x, self.y = nx, ny
 
     def forward(self, d):
@@ -79,17 +78,19 @@ class _WebTurtle:
             x, y = x
         self._line_to(float(x), float(y))
 
-    def penup(self):
-        self.pendown = False
+    def penup(self): self._pendown = False
+    def pendown(self): self._pendown = True
 
-    def pendown_(self):
-        self.pendown = True
+    def pencolor(self, c=None):
+        if c is None: return self._pencolor
+        self._pencolor = str(c)
 
-    def pencolor_(self, c):
-        self.pencolor = str(c)
+    def pensize(self, w=None):
+        if w is None: return self._pensize
+        self._pensize = float(w)
 
-    def pensize_(self, w):
-        self.pensize = float(w)
+    def clear(self): _cmd(type="clear")
+    def bgcolor(self, c): _cmd(type="bg", color=str(c))
 
     def home(self):
         self.goto(0, 0)
@@ -98,22 +99,16 @@ class _WebTurtle:
     def setheading(self, deg):
         self.heading = float(deg) % 360.0
 
-    def clear(self):
-        _cmd(type="clear")
-
-    def bgcolor(self, c):
-        _cmd(type="bg", color=str(c))
-
-# Single shared turtle like classic turtle module
+# shared default turtle
 _T = _WebTurtle()
 
-# Module functions mirroring turtle
 def reset():
     _cmd(type="clear")
     _cmd(type="bg", color="#111111")
     global _T
     _T = _WebTurtle()
 
+# module-level wrappers like real turtle
 def forward(d): _T.forward(d)
 def fd(d): _T.forward(d)
 def backward(d): _T.backward(d)
@@ -126,38 +121,31 @@ def goto(x, y=None): _T.goto(x, y)
 def setpos(x, y=None): _T.goto(x, y)
 def penup(): _T.penup()
 def pu(): _T.penup()
-def pendown(): _T.pendown_()
-def pd(): _T.pendown_()
-def pencolor(c=None):
-    if c is None: return _T.pencolor
-    _T.pencolor_(c)
-def pensize(w=None):
-    if w is None: return _T.pensize
-    _T.pensize_(w)
-def width(w=None): return pensize(w)
+def pendown(): _T.pendown()
+def pd(): _T.pendown()
+def pencolor(c=None): return _T.pencolor(c)
+def pensize(w=None): return _T.pensize(w)
+def width(w=None): return _T.pensize(w)
 def clear(): _T.clear()
 def bgcolor(c): _T.bgcolor(c)
 def home(): _T.home()
 def setheading(a): _T.setheading(a)
 
-# OO API: Turtle() returns a new turtle that draws on same canvas
 class Turtle(_WebTurtle):
     pass
 
-# Very small Screen shim
 class Screen:
     def bgcolor(self, c): bgcolor(c)
     def clearscreen(self): clear()
     def reset(self): reset()
 
-# Create a real module object called "turtle"
+# Create module object "turtle"
 turtle = types.ModuleType("turtle")
 for _name, _obj in list(globals().items()):
     if _name.startswith("_"): 
         continue
     setattr(turtle, _name, _obj)
 
-import sys
 sys.modules["turtle"] = turtle
   `);
 
@@ -182,9 +170,8 @@ self.onmessage = async (ev) => {
       await ensurePyodide();
 
       // Trinket-like: reset turtle each run
-      post("canvas_cmd", { type: "clear" });
-      post("canvas_cmd", { type: "bg", color: "#111111" });
-
+      post("canvas_cmd", { cmd: { type: "clear" } });
+      post("canvas_cmd", { cmd: { type: "bg", color: "#111111" } });
       await pyodide.runPythonAsync(`import turtle; turtle.reset()`);
 
       post("status", { text: "Running…" });
