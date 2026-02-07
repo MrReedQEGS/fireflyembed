@@ -32,23 +32,20 @@
     #left { border-right: 1px solid #ddd; }
     .pane-title { padding: 8px 12px; font-size: 14px; color: #444; border-bottom: 1px solid #eee; }
 
-    /* Editor */
     #editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
     .CodeMirror-gutters { border-right: 1px solid #eee; }
 
-    /* Console */
     #consoleWrap { flex: 1; min-height: 0; background: #0b0b0b; }
     #console {
       height: 100%;
       padding: 12px;
       overflow: auto;
       color: #eaeaea;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-family: ui-monospace, monospace;
       font-size: 14px;
       line-height: 1.4;
       white-space: pre-wrap;
-      word-break: break-word;
       outline: none;
       cursor: text;
     }
@@ -59,7 +56,6 @@
       margin-left: 1px;
       background: #eaeaea;
       animation: blink 1s steps(1) infinite;
-      vertical-align: -2px;
       height: 1em;
     }
     @keyframes blink { 50% { opacity: 0; } }
@@ -73,7 +69,7 @@
 
   <button id="run" disabled>Run ▶</button>
   <button id="reload" disabled>Reload ↻</button>
-  <button id="download" disabled>Download .txt</button>
+  <button id="downloadTxt">Download .txt</button>
   <button id="clear" disabled>Clear</button>
 
   <div class="spacer"></div>
@@ -82,4 +78,140 @@
 
 <div id="app">
   <section id="left">
-    <div class="pane-title" id="filename">
+    <div class="pane-title" id="filename">Editor</div>
+    <div id="editorWrap"><textarea id="editor"></textarea></div>
+  </section>
+
+  <section id="right">
+    <div class="pane-title">Console</div>
+    <div id="consoleWrap">
+      <div id="console" tabindex="0"></div>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+  import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
+
+  const runBtn = document.getElementById("run");
+  const reloadBtn = document.getElementById("reload");
+  const clearBtn = document.getElementById("clear");
+  const statusEl = document.getElementById("status");
+  const consoleEl = document.getElementById("console");
+  const programSel = document.getElementById("program");
+  const filenameEl = document.getElementById("filename");
+
+  const setStatus = s => statusEl.textContent = s;
+
+  function write(s="") { consoleEl.textContent += s; consoleEl.scrollTop = consoleEl.scrollHeight; }
+  function writeln(s="") { write(s + "\n"); }
+  function clearConsole() { consoleEl.textContent = ""; }
+  clearBtn.onclick = () => clearConsole();
+
+  const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
+    mode: "python",
+    lineNumbers: true,
+    indentUnit: 4,
+    matchBrackets: true
+  });
+  cm.setSize(null, "100%");
+  window.cm = cm;   // <<< SAFE EXPOSURE
+
+  let inputActive = false, inputBuffer = "", inputResolve = null;
+  function beginInput(prompt="") {
+    inputActive = true; inputBuffer = "";
+    write(prompt);
+    return new Promise(r => inputResolve = r);
+  }
+  function finishInput() {
+    inputActive = false;
+    inputResolve?.(inputBuffer);
+    inputResolve = null;
+  }
+
+  consoleEl.addEventListener("keydown", e => {
+    if (!inputActive) return;
+    e.preventDefault();
+    if (e.key === "Enter") { writeln(); finishInput(); }
+    else if (e.key === "Backspace" && inputBuffer.length) {
+      inputBuffer = inputBuffer.slice(0,-1);
+      consoleEl.textContent = consoleEl.textContent.slice(0,-1);
+    }
+    else if (e.key.length === 1) { inputBuffer += e.key; write(e.key); }
+  });
+
+  function wrapUserCode(src) {
+    const t = src.replace(/(^|[^\w.])input\s*\(/g, "$1await input(");
+    return "async def __main__():\n" +
+      t.split("\n").map(l=>"    "+l).join("\n") +
+      "\nawait __main__()";
+  }
+
+  const originals = new Map();
+  let currentFile = null;
+
+  async function loadProgramList() {
+    const files = await (await fetch("./programs.json")).json();
+    for (const f of files) programSel.add(new Option(f,f));
+    return files[0];
+  }
+
+  async function loadProgram(file) {
+    clearConsole();
+    const text = await (await fetch("./"+file)).text();
+    originals.set(file,text);
+    currentFile = file;
+    cm.setValue(text);
+    filenameEl.textContent = file;
+    programSel.value = file;
+  }
+
+  setStatus("Loading Python…");
+  const pyodide = await loadPyodide();
+  pyodide.setStdout({ batched: s => writeln(s) });
+  pyodide.setStderr({ batched: s => writeln(s) });
+  pyodide.globals.set("__console_input__", beginInput);
+  await pyodide.runPythonAsync(`
+import builtins
+async def _input(prompt=""):
+    return await __console_input__(str(prompt))
+builtins.input = _input
+  `);
+
+  runBtn.disabled = reloadBtn.disabled = clearBtn.disabled = programSel.disabled = false;
+
+  const first = await loadProgramList();
+  await loadProgram(first);
+
+  runBtn.onclick = async () => {
+    setStatus("Running…");
+    try { await pyodide.runPythonAsync(wrapUserCode(cm.getValue())); }
+    catch(e){ writeln(String(e)); }
+    setStatus("Done");
+  };
+
+  reloadBtn.onclick = () => loadProgram(programSel.value);
+</script>
+
+<!-- SAFE, NON-MODULE DOWNLOAD SCRIPT -->
+<script>
+  document.getElementById("downloadTxt").addEventListener("click", () => {
+    if (!window.cm) return alert("Editor not ready");
+
+    let name = "program.txt";
+    const label = document.getElementById("filename");
+    if (label && label.textContent) {
+      name = label.textContent.replace(/\.py$/i, "") + ".txt";
+    }
+
+    const blob = new Blob([window.cm.getValue()], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+</script>
+
+</body>
+</html>
