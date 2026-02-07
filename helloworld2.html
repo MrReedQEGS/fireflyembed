@@ -1,0 +1,245 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Python Runner (CodeMirror 5)</title>
+
+  <!-- CodeMirror 5 -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-family: system-ui, sans-serif;
+    }
+
+    header {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #ddd;
+    }
+
+    #status { color: #666; font-size: 14px; }
+    .spacer { flex: 1; }
+
+    #app {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+
+    #left, #right {
+      width: 50%;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    #left { border-right: 1px solid #ddd; }
+
+    .pane-title {
+      padding: 8px 12px;
+      font-size: 14px;
+      color: #444;
+      border-bottom: 1px solid #eee;
+    }
+
+    /* Console */
+    #console {
+      flex: 1;
+      background: #0b0b0b;
+      color: #eaeaea;
+      padding: 12px;
+      overflow: auto;
+      font-family: ui-monospace, monospace;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+
+    #stdinRow {
+      display: none;
+      background: #0b0b0b;
+      border-top: 1px solid #222;
+      padding: 8px 12px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    #stdinPrompt {
+      color: #bdbdbd;
+      font-family: ui-monospace, monospace;
+      white-space: pre;
+    }
+
+    #stdin {
+      flex: 1;
+      background: transparent;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #eaeaea;
+      padding: 6px 8px;
+      font-family: ui-monospace, monospace;
+      outline: none;
+    }
+
+    button { padding: 8px 12px; cursor: pointer; }
+  </style>
+</head>
+
+<body>
+<header>
+  <button id="run" disabled>Run ▶</button>
+  <button id="clear" disabled>Clear</button>
+  <div class="spacer"></div>
+  <div id="status">Loading Python…</div>
+</header>
+
+<div id="app">
+  <section id="left">
+    <div class="pane-title">main.py</div>
+    <textarea id="editor"></textarea>
+  </section>
+
+  <section id="right">
+    <div class="pane-title">Console</div>
+    <div id="console"></div>
+
+    <div id="stdinRow">
+      <span id="stdinPrompt"></span>
+      <input id="stdin" type="text" autocomplete="off" />
+    </div>
+  </section>
+</div>
+
+<script type="module">
+  import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
+
+  const runBtn = document.getElementById("run");
+  const clearBtn = document.getElementById("clear");
+  const statusEl = document.getElementById("status");
+  const consoleEl = document.getElementById("console");
+
+  const stdinRow = document.getElementById("stdinRow");
+  const stdinPromptEl = document.getElementById("stdinPrompt");
+  const stdinEl = document.getElementById("stdin");
+
+  const write = (s="") => {
+    consoleEl.textContent += s;
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  };
+  const writeln = (s="") => write(s + "\n");
+  const clearOut = () => consoleEl.textContent = "";
+
+  clearBtn.onclick = clearOut;
+
+  // CodeMirror 5 editor
+  const cm = CodeMirror.fromTextArea(
+    document.getElementById("editor"),
+    {
+      mode: "python",
+      lineNumbers: true,
+      indentUnit: 4,
+      tabSize: 4,
+      autofocus: true
+    }
+  );
+
+  // Load main.py into editor
+  async function loadInitialCode() {
+    try {
+      const res = await fetch("./main.py", { cache: "no-store" });
+      cm.setValue(await res.text());
+    } catch {
+      cm.setValue(
+`print("Hello")
+name = input("Your name? ")
+print("Hi", name)`
+      );
+    }
+  }
+
+  // Console-style stdin
+  let stdinResolver = null;
+
+  function requestInput(promptText) {
+    stdinPromptEl.textContent = promptText ?? "";
+    stdinEl.value = "";
+    stdinRow.style.display = "flex";
+    stdinEl.focus();
+
+    return new Promise(resolve => stdinResolver = resolve);
+  }
+
+  stdinEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && stdinResolver) {
+      const value = stdinEl.value;
+      writeln(value);
+      stdinRow.style.display = "none";
+      const resolve = stdinResolver;
+      stdinResolver = null;
+      resolve(value);
+    }
+  });
+
+  // Load Pyodide
+  const pyodide = await loadPyodide();
+
+  pyodide.setStdout({ batched: (s) => writeln(s) });
+  pyodide.setStderr({ batched: (s) => writeln(s) });
+
+  pyodide.globals.set("__stdin_request__", requestInput);
+
+  await pyodide.runPythonAsync(`
+import builtins
+
+async def _input(prompt=""):
+    return await __stdin_request__(str(prompt))
+
+builtins.input = _input
+  `);
+
+  await loadInitialCode();
+
+  statusEl.textContent = "Ready";
+  runBtn.disabled = false;
+  clearBtn.disabled = false;
+
+  function wrapUserCode(src) {
+    const transformed = src.replace(/(^|[^\\w.])input\\s*\\(/g, "$1await input(");
+    const indented = transformed.split("\\n").map(l => "    " + l);
+    return [
+      "async def __main__():",
+      ...indented,
+      "",
+      "await __main__()"
+    ].join("\\n");
+  }
+
+  runBtn.onclick = async () => {
+    clearOut();
+    stdinRow.style.display = "none";
+    runBtn.disabled = true;
+    statusEl.textContent = "Running…";
+
+    try {
+      await pyodide.runPythonAsync(wrapUserCode(cm.getValue()));
+      statusEl.textContent = "Done";
+    } catch (e) {
+      writeln(String(e));
+      statusEl.textContent = "Error";
+    } finally {
+      runBtn.disabled = false;
+    }
+  };
+</script>
+</body>
+</html>
