@@ -3,93 +3,37 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Python Runner (CodeMirror 5)</title>
+  <title>Python Runner (CodeMirror 5 + Pyodide)</title>
 
-  <!-- CodeMirror 5 -->
-  <link rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <!-- CodeMirror 5 (reliable CDN) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
 
   <style>
-    body {
-      margin: 0;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      font-family: system-ui, sans-serif;
-    }
-
-    header {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      padding: 10px 12px;
-      border-bottom: 1px solid #ddd;
-    }
-
+    body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
+    header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
     #status { color: #666; font-size: 14px; }
     .spacer { flex: 1; }
 
-    #app {
-      flex: 1;
-      display: flex;
-      min-height: 0;
-    }
-
-    #left, #right {
-      width: 50%;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
-
+    #app { flex: 1; display: flex; min-height: 0; }
+    #left, #right { width: 50%; display: flex; flex-direction: column; min-height: 0; }
     #left { border-right: 1px solid #ddd; }
 
-    .pane-title {
-      padding: 8px 12px;
-      font-size: 14px;
-      color: #444;
-      border-bottom: 1px solid #eee;
-    }
+    .pane-title { padding: 8px 12px; font-size: 14px; color: #444; border-bottom: 1px solid #eee; }
 
-    /* Console */
-    #console {
-      flex: 1;
-      background: #0b0b0b;
-      color: #eaeaea;
-      padding: 12px;
-      overflow: auto;
-      font-family: ui-monospace, monospace;
-      font-size: 14px;
-      white-space: pre-wrap;
-    }
+    /* IMPORTANT: give CodeMirror a height */
+    #editorWrap { flex: 1; min-height: 0; }
+    .CodeMirror { height: 100% !important; }
 
-    #stdinRow {
-      display: none;
-      background: #0b0b0b;
-      border-top: 1px solid #222;
-      padding: 8px 12px;
-      gap: 8px;
-      align-items: center;
-    }
+    #console { flex: 1; background: #0b0b0b; color: #eaeaea; padding: 12px; overflow: auto;
+               font-family: ui-monospace, monospace; font-size: 14px; white-space: pre-wrap; }
 
-    #stdinPrompt {
-      color: #bdbdbd;
-      font-family: ui-monospace, monospace;
-      white-space: pre;
-    }
-
-    #stdin {
-      flex: 1;
-      background: transparent;
-      border: 1px solid #333;
-      border-radius: 6px;
-      color: #eaeaea;
-      padding: 6px 8px;
-      font-family: ui-monospace, monospace;
-      outline: none;
-    }
+    #stdinRow { display: none; background: #0b0b0b; border-top: 1px solid #222; padding: 8px 12px;
+                gap: 8px; align-items: center; }
+    #stdinPrompt { color: #bdbdbd; font-family: ui-monospace, monospace; white-space: pre; }
+    #stdin { flex: 1; background: transparent; border: 1px solid #333; border-radius: 6px; color: #eaeaea;
+             padding: 6px 8px; font-family: ui-monospace, monospace; outline: none; }
 
     button { padding: 8px 12px; cursor: pointer; }
   </style>
@@ -100,19 +44,20 @@
   <button id="run" disabled>Run ▶</button>
   <button id="clear" disabled>Clear</button>
   <div class="spacer"></div>
-  <div id="status">Loading Python…</div>
+  <div id="status">Starting…</div>
 </header>
 
 <div id="app">
   <section id="left">
     <div class="pane-title">main.py</div>
-    <textarea id="editor"></textarea>
+    <div id="editorWrap">
+      <textarea id="editor"></textarea>
+    </div>
   </section>
 
   <section id="right">
     <div class="pane-title">Console</div>
     <div id="console"></div>
-
     <div id="stdinRow">
       <span id="stdinPrompt"></span>
       <input id="stdin" type="text" autocomplete="off" />
@@ -132,57 +77,62 @@
   const stdinPromptEl = document.getElementById("stdinPrompt");
   const stdinEl = document.getElementById("stdin");
 
-  const write = (s="") => {
-    consoleEl.textContent += s;
-    consoleEl.scrollTop = consoleEl.scrollHeight;
-  };
-  const writeln = (s="") => write(s + "\n");
-  const clearOut = () => consoleEl.textContent = "";
-
+  const writeln = (s="") => { consoleEl.textContent += s + "\n"; consoleEl.scrollTop = consoleEl.scrollHeight; };
+  const clearOut = () => { consoleEl.textContent = ""; };
   clearBtn.onclick = clearOut;
 
-  // CodeMirror 5 editor
-  const cm = CodeMirror.fromTextArea(
-    document.getElementById("editor"),
-    {
+  // Show JS errors in the console panel too
+  window.addEventListener("error", (e) => writeln("JS error: " + (e.message || e.error || e)));
+  window.addEventListener("unhandledrejection", (e) => writeln("JS promise rejection: " + e.reason));
+
+  function setStatus(s) { statusEl.textContent = s; }
+
+  // 1) Create CodeMirror editor (fail loudly if CodeMirror didn't load)
+  let cm;
+  try {
+    if (!window.CodeMirror) throw new Error("CodeMirror failed to load (CDN blocked?)");
+    cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
       mode: "python",
       lineNumbers: true,
       indentUnit: 4,
       tabSize: 4,
-      autofocus: true
-    }
-  );
+    });
+    cm.setSize(null, "100%");
+  } catch (e) {
+    setStatus("Editor failed");
+    writeln(String(e));
+    // Don't proceed; without editor it's not useful
+    throw e;
+  }
 
-  // Load main.py into editor
+  // 2) Load main.py into editor
   async function loadInitialCode() {
+    setStatus("Loading main.py…");
     try {
       const res = await fetch("./main.py", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Could not load main.py (HTTP ${res.status})`);
       cm.setValue(await res.text());
-    } catch {
-      cm.setValue(
-`print("Hello")
-name = input("Your name? ")
-print("Hi", name)`
-      );
+      setStatus("Loaded main.py");
+    } catch (e) {
+      cm.setValue(`print("main.py not found beside index.html")\nname = input("Your name? ")\nprint("Hi", name)\n`);
+      setStatus("main.py missing");
+      writeln(String(e));
     }
   }
 
-  // Console-style stdin
+  // 3) Console-style stdin (no popups)
   let stdinResolver = null;
-
   function requestInput(promptText) {
     stdinPromptEl.textContent = promptText ?? "";
     stdinEl.value = "";
     stdinRow.style.display = "flex";
     stdinEl.focus();
-
     return new Promise(resolve => stdinResolver = resolve);
   }
-
   stdinEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && stdinResolver) {
       const value = stdinEl.value;
-      writeln(value);
+      writeln(value);              // echo input like a terminal
       stdinRow.style.display = "none";
       const resolve = stdinResolver;
       stdinResolver = null;
@@ -190,52 +140,51 @@ print("Hi", name)`
     }
   });
 
-  // Load Pyodide
-  const pyodide = await loadPyodide();
+  // 4) Load Pyodide and patch input()
+  setStatus("Loading Python (Pyodide)…");
+  let pyodide;
+  try {
+    pyodide = await loadPyodide();
+    pyodide.setStdout({ batched: (s) => writeln(s) });
+    pyodide.setStderr({ batched: (s) => writeln(s) });
 
-  pyodide.setStdout({ batched: (s) => writeln(s) });
-  pyodide.setStderr({ batched: (s) => writeln(s) });
-
-  pyodide.globals.set("__stdin_request__", requestInput);
-
-  await pyodide.runPythonAsync(`
+    pyodide.globals.set("__stdin_request__", requestInput);
+    await pyodide.runPythonAsync(`
 import builtins
-
 async def _input(prompt=""):
     return await __stdin_request__(str(prompt))
-
 builtins.input = _input
-  `);
+    `.trim());
 
-  await loadInitialCode();
+    setStatus("Ready");
+    runBtn.disabled = false;
+    clearBtn.disabled = false;
+  } catch (e) {
+    setStatus("Pyodide failed");
+    writeln(String(e));
+    throw e;
+  }
 
-  statusEl.textContent = "Ready";
-  runBtn.disabled = false;
-  clearBtn.disabled = false;
-
+  // 5) Wrap user code so input() can be awaited (user still types input() normally)
   function wrapUserCode(src) {
     const transformed = src.replace(/(^|[^\\w.])input\\s*\\(/g, "$1await input(");
-    const indented = transformed.split("\\n").map(l => "    " + l);
-    return [
-      "async def __main__():",
-      ...indented,
-      "",
-      "await __main__()"
-    ].join("\\n");
+    const indented = transformed.split("\n").map(l => "    " + l);
+    return ["async def __main__():", ...indented, "", "await __main__()"].join("\n");
   }
+
+  await loadInitialCode();
 
   runBtn.onclick = async () => {
     clearOut();
     stdinRow.style.display = "none";
     runBtn.disabled = true;
-    statusEl.textContent = "Running…";
-
+    setStatus("Running…");
     try {
       await pyodide.runPythonAsync(wrapUserCode(cm.getValue()));
-      statusEl.textContent = "Done";
+      setStatus("Done");
     } catch (e) {
+      setStatus("Error");
       writeln(String(e));
-      statusEl.textContent = "Error";
     } finally {
       runBtn.disabled = false;
     }
