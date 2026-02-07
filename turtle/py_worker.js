@@ -77,7 +77,6 @@ class _WebTurtle:
         self._pensize = 2.0
         self._speed = 0      # 0 = instant
         self._visible = True
-
         _emit_state(self)
 
     def _line_to(self, nx, ny):
@@ -90,17 +89,17 @@ class _WebTurtle:
                 width=self._pensize,
                 speed=self._speed
             )
-        self.x, self.y = nx, ny
+        self.x, self.y = float(nx), float(ny)
         _emit_state(self)
 
     def forward(self, d):
         r = math.radians(self.heading)
-        nx = self.x + math.cos(r) * d
-        ny = self.y + math.sin(r) * d
+        nx = self.x + math.cos(r) * float(d)
+        ny = self.y + math.sin(r) * float(d)
         self._line_to(nx, ny)
 
     def backward(self, d):
-        self.forward(-d)
+        self.forward(-float(d))
 
     def left(self, deg):
         self.heading = (self.heading + float(deg)) % 360.0
