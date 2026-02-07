@@ -338,6 +338,7 @@
   function stopExecution(reason = "Stopped") {
     if (running || waitingForInput) {
       cancelInputIfAny();
+      writeln("\nProgram stopped by user.");
       try { worker?.terminate(); } catch {}
       worker = makeWorker();
       running = false;
