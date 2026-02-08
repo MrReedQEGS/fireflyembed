@@ -5,6 +5,7 @@ non-turtle stuff
 it creates my_prog even if it already exists and I think it can write over the one you have if you are not careful.
 
 turtle stuff
+ordering messed up.  If you draw squares and print "square 1" "square 2" etc.  The prints all happen instantly while the drawing is still happening.  Adding a seq with AI might help?
 ability to resize all 3 windows
 zoom in and out of drawing window
 drawing not deleted when window resized
