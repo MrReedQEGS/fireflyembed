@@ -1,3 +1,4 @@
+//Just fixed the tracer(0) issue - this should be stable!
 // py_worker.js (with tracer/update) (type: module)
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
 
