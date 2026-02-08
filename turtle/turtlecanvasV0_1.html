@@ -1092,5 +1092,44 @@
     setStatus("Ready");
   })();
 </script>
+
+<!-- Zoom controls (visual-only, safe) -->
+<div style="margin-top:8px; display:flex; gap:6px; align-items:center;">
+  <button id="zoomOut">–</button>
+  <span id="zoomLabel">100%</span>
+  <button id="zoomIn">+</button>
+</div>
+
+<script>
+// === Canvas visual zoom (UI-only) ===
+let zoom = 1.0;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 3.0;
+const ZOOM_STEP = 0.1;
+
+const canvas = document.getElementById("turtleCanvas");
+const zoomInBtn = document.getElementById("zoomIn");
+const zoomOutBtn = document.getElementById("zoomOut");
+const zoomLabel = document.getElementById("zoomLabel");
+
+function applyZoom() {
+  if (!canvas) return;
+  canvas.style.transformOrigin = "center center";
+  canvas.style.transform = `scale(${zoom})`;
+  if (zoomLabel) zoomLabel.textContent = Math.round(zoom * 100) + "%";
+}
+
+if (zoomInBtn && zoomOutBtn) {
+  zoomInBtn.onclick = () => {
+    zoom = Math.min(ZOOM_MAX, zoom + ZOOM_STEP);
+    applyZoom();
+  };
+  zoomOutBtn.onclick = () => {
+    zoom = Math.max(ZOOM_MIN, zoom - ZOOM_STEP);
+    applyZoom();
+  };
+  applyZoom();
+}
+</script>
 </body>
 </html>
