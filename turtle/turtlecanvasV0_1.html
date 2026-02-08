@@ -956,31 +956,14 @@
   let acceptCanvas = true;
   let cancelToken = 0;
 
-  
-  // Friendly stop messages (hide scary Python tracebacks for expected limits)
-  let pendingFriendlyStop = null;
-  function extractFriendlyStopMessage(text) {
-    const lines = String(text ?? "").split("\n");
-    for (const line of lines) {
-      if (line.includes("Stopped: turtle command limit exceeded")) return line.trim();
-      if (line.includes("Stopped: time limit exceeded")) return line.trim();
-      if (line.includes("Stopped: time limit")) return line.trim();
-    }
-    return null;
-  }
-
-function makeWorker() {
+  function makeWorker() {
     const w = new Worker("./py_worker.js?v=tracer4", { type: "module" });
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
       if (running) lastActivityTs = Date.now();
       if (m.type === "stdout") writeln(m.text ?? "");
-      if (m.type === "stderr") {
-        const friendly = extractFriendlyStopMessage(m.text);
-        if (friendly) { pendingFriendlyStop = friendly; return; }
-        writeln(m.text ?? "");
-      }
+      if (m.type === "stderr") writeln(m.text ?? "");
       if (m.type === "status") setStatus(m.text ?? "");
       if (m.type === "canvas_cmd") {
         if (!acceptCanvas) return;
@@ -1009,16 +992,8 @@ function makeWorker() {
         if (runTimeoutId) { clearTimeout(runTimeoutId); runTimeoutId = null; }
         runBtn.disabled = false;
         stopBtn.disabled = false;
-        const friendly = pendingFriendlyStop || extractFriendlyStopMessage(m.text);
-        pendingFriendlyStop = null;
-        if (friendly) {
-          setStatus("Stopped");
-          writeln(friendly + "
-");
-} else {
-          setStatus("Error");
-          writeln(String(m.text ?? ""));
-        }
+        setStatus("Error");
+        writeln(String(m.text ?? ""));
         cancelInputUI();
       }
     };
