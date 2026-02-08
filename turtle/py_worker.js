@@ -1,3 +1,4 @@
+
 // py_worker.js (type: module)
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
 
@@ -45,21 +46,6 @@ async function ensurePyodide() {
     post("canvas_cmd", { cmd });
   });
 
-  // Batch canvas commands (used by tracer(0)/update() to commit a frame at once)
-  globals.set("__canvas_cmd_batch__", (arr, flush = false) => {
-    const cmds = [];
-    // `arr` may be a PyProxy list; convert to plain JS array of plain objects
-    try {
-      const n = arr.length;
-      for (let i = 0; i < n; i++) cmds.push(toPlainObject(arr.get(i)));
-    } catch {
-      try {
-        for (const item of arr) cmds.push(toPlainObject(item));
-      } catch {}
-    }
-    post("canvas_cmd_batch", { cmds, flush: !!flush });
-  });
-
   // Install async input
   await pyodide.runPythonAsync(`
 import builtins
@@ -72,39 +58,8 @@ builtins.input = _input
   await pyodide.runPythonAsync(`
 import math, types, sys
 
-_tracer_n = 1
-_pending_cmds = []
-
-def tracer(n=1, delay=None):
-    """Mimic CPython turtle.tracer(). If n==0, buffer draw/state cmds until update()."""
-    global _tracer_n
-    try:
-        _tracer_n = int(n)
-    except Exception:
-        _tracer_n = 1
-    if _tracer_n != 0:
-        update()
-
-def update():
-    global _pending_cmds
-    if not _pending_cmds:
-        return
-    __canvas_cmd_batch__(_pending_cmds, True)
-    _pending_cmds = []
-
 def _cmd(**kwargs):
-    global _pending_cmds
-    # When tracer(0), we buffer commands and then flush on update().
-    # To mimic standard turtle tracer/update behavior (instant redraw),
-    # force speed=0 for *both* drawing lines and pen-up turtle moves/state updates.
-    if _tracer_n == 0:
-        t = kwargs.get("type")
-        if t in ("line", "turtle"):
-            kwargs["speed"] = 0
-        _pending_cmds.append(kwargs)
-    else:
-        __canvas_cmd__(kwargs)
-
+    __canvas_cmd__(kwargs)
 
 def _emit_state(t):
     _cmd(type="turtle",
