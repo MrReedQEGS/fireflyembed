@@ -1,62 +1,234 @@
+// py_worker.js (type: module)
 import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.mjs";
 
 let pyodide = null;
+let pendingInputResolve = null;
 
 function post(type, data = {}) {
   self.postMessage({ type, ...data });
 }
 
-async function init() {
+// Convert Pyodide proxies / Maps / dicts into a plain JS object
+function toPlainObject(x) {
+  if (x && typeof x === "object" && typeof x.toJs === "function") {
+    const converted = x.toJs({ dict_converter: Object.fromEntries });
+    return toPlainObject(converted);
+  }
+  if (x instanceof Map) return Object.fromEntries(x.entries());
+  if (Array.isArray(x)) return x.map(toPlainObject);
+  if (x && typeof x === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(x)) out[k] = toPlainObject(v);
+    return out;
+  }
+  return x;
+}
+
+async function ensurePyodide() {
+  if (pyodide) return;
+
+  post("status", { text: "Loading Python…" });
   pyodide = await loadPyodide();
-  pyodide.setStdout({ batched: s => post("stdout", { text:s }) });
+
+  pyodide.setStdout({ batched: s => post("stdout", { text: s }) });
+  pyodide.setStderr({ batched: s => post("stderr", { text: s }) });
+
+  pyodide.globals.set("__worker_console_input__", (prompt) => {
+    post("input_request", { prompt: String(prompt ?? "") });
+    return new Promise(resolve => { pendingInputResolve = resolve; });
+  });
 
   pyodide.globals.set("__canvas_cmd__", (obj) => {
-    post("canvas_cmd", { cmd: obj });
+    const cmd = toPlainObject(obj);
+    post("canvas_cmd", { cmd });
   });
 
   await pyodide.runPythonAsync(`
-import math, sys, types
+import builtins
+async def _input(prompt=""):
+    return await __worker_console_input__(str(prompt))
+builtins.input = _input
+  `);
 
-def emit(**k): __canvas_cmd__(k)
+  await pyodide.runPythonAsync(`
+import math, types, sys
 
-class T:
+def _cmd(**kwargs):
+    __canvas_cmd__(kwargs)
+
+class _WebTurtle:
     def __init__(self):
-        self.x = self.y = 0.0
-        self.heading = 0.0
-        self.speed = 10
-        self.visible = True
-        self.color = "#00ff66"
+        self.x = 0.0
+        self.y = 0.0
+        self.heading = 0.0   # degrees, 0 = east
+        self._pendown = True
+        self._pencolor = "#00ff66"
+        self._pensize = 2.0
+        self._speed = 0      # 0 fastest, 1..10 slower->faster
+
+    def _line_to(self, nx, ny):
+        if self._pendown:
+            _cmd(
+                type="line",
+                x1=self.x, y1=self.y,
+                x2=nx, y2=ny,
+                color=self._pencolor,
+                width=self._pensize,
+                speed=self._speed
+            )
+        self.x, self.y = nx, ny
 
     def forward(self, d):
         r = math.radians(self.heading)
-        nx = self.x + math.cos(r)*d
-        ny = self.y + math.sin(r)*d
-        emit(type="line", x1=self.x, y1=self.y,
-             x2=nx, y2=ny, color=self.color, width=2, speed=self.speed)
-        self.x, self.y = nx, ny
-        emit(type="turtle", x=self.x, y=self.y,
-             heading=self.heading, visible=self.visible, color=self.color)
+        nx = self.x + math.cos(r) * d
+        ny = self.y + math.sin(r) * d
+        self._line_to(nx, ny)
 
-    def left(self, a):
-        self.heading = (self.heading + a) % 360
-        emit(type="turtle", x=self.x, y=self.y,
-             heading=self.heading, visible=self.visible, color=self.color)
+    def backward(self, d):
+        self.forward(-d)
 
-t = T()
-mod = types.SimpleNamespace(
-    forward=t.forward,
-    left=t.left,
-    speed=lambda s=None: setattr(t,"speed",int(s)) if s is not None else t.speed
-)
-sys.modules["turtle"] = mod
+    def left(self, deg):
+        self.heading = (self.heading + deg) % 360.0
+
+    def right(self, deg):
+        self.heading = (self.heading - deg) % 360.0
+
+    def goto(self, x, y=None):
+        if y is None:
+            x, y = x
+        self._line_to(float(x), float(y))
+
+    # ✅ setpos should exist on Turtle objects
+    def setpos(self, x, y=None):
+        self.goto(x, y)
+
+    # common alias in turtle
+    def setposition(self, x, y=None):
+        self.goto(x, y)
+
+    def penup(self): self._pendown = False
+    def pendown(self): self._pendown = True
+
+    def pencolor(self, c=None):
+        if c is None: return self._pencolor
+        self._pencolor = str(c)
+
+    def pensize(self, w=None):
+        if w is None: return self._pensize
+        self._pensize = float(w)
+
+    # ✅ speed should exist on Turtle objects
+    def speed(self, s=None):
+        if s is None:
+            return self._speed
+        try:
+            s = int(s)
+        except:
+            return
+        if s < 0: s = 0
+        if s > 10: s = 10
+        self._speed = s
+
+    def clear(self): _cmd(type="clear")
+    def bgcolor(self, c): _cmd(type="bg", color=str(c))
+
+    def home(self):
+        self.goto(0, 0)
+        self.heading = 0.0
+
+    def setheading(self, deg):
+        self.heading = float(deg) % 360.0
+
+# shared default turtle
+_T = _WebTurtle()
+
+def reset():
+    _cmd(type="clear")
+    _cmd(type="bg", color="#111111")
+    global _T
+    _T = _WebTurtle()
+
+# module-level wrappers (like real turtle)
+def forward(d): _T.forward(d)
+def fd(d): _T.forward(d)
+def backward(d): _T.backward(d)
+def bk(d): _T.backward(d)
+def left(a): _T.left(a)
+def lt(a): _T.left(a)
+def right(a): _T.right(a)
+def rt(a): _T.right(a)
+def goto(x, y=None): _T.goto(x, y)
+def setpos(x, y=None): _T.setpos(x, y)
+def setposition(x, y=None): _T.setposition(x, y)
+def penup(): _T.penup()
+def pu(): _T.penup()
+def pendown(): _T.pendown()
+def pd(): _T.pendown()
+def pencolor(c=None): return _T.pencolor(c)
+def pensize(w=None): return _T.pensize(w)
+def width(w=None): return _T.pensize(w)
+def speed(s=None): return _T.speed(s)
+def clear(): _T.clear()
+def bgcolor(c): _T.bgcolor(c)
+def home(): _T.home()
+def setheading(a): _T.setheading(a)
+
+class Turtle(_WebTurtle):
+    pass
+
+class Screen:
+    def bgcolor(self, c): bgcolor(c)
+    def clearscreen(self): clear()
+    def reset(self): reset()
+
+turtle = types.ModuleType("turtle")
+for _name, _obj in list(globals().items()):
+    if _name.startswith("_"):
+        continue
+    setattr(turtle, _name, _obj)
+
+sys.modules["turtle"] = turtle
   `);
 
-  post("ready");
+  post("ready", { version: "turtle-speed-setpos-v1" });
 }
 
-self.onmessage = async e => {
-  if (e.data.type === "run") {
-    if (!pyodide) await init();
-    await pyodide.runPythonAsync(e.data.code);
+function wrapUserCode(src) {
+  const t = src.replace(/(^|[^\w.])input\\s*\\(/g, "$1await input(");
+  const i = t.split("\\n").map(l => "    " + l);
+  return ["async def __main__():", ...i, "", "await __main__()"].join("\\n");
+}
+
+self.onmessage = async (ev) => {
+  const msg = ev.data || {};
+  try {
+    if (msg.type === "init") {
+      await ensurePyodide();
+      return;
+    }
+
+    if (msg.type === "run") {
+      await ensurePyodide();
+
+      post("canvas_cmd", { cmd: { type: "clear" } });
+      post("canvas_cmd", { cmd: { type: "bg", color: "#111111" } });
+      await pyodide.runPythonAsync(`import turtle; turtle.reset()`);
+
+      post("status", { text: "Running…" });
+      const code = wrapUserCode(msg.code ?? "");
+      await pyodide.runPythonAsync(code);
+      post("done");
+      return;
+    }
+
+    if (msg.type === "input_response") {
+      if (pendingInputResolve) {
+        pendingInputResolve(String(msg.text ?? ""));
+        pendingInputResolve = null;
+      }
+      return;
+    }
+  } catch (e) {
+    post("error", { text: String(e) });
   }
 };
