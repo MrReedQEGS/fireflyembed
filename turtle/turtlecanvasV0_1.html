@@ -83,11 +83,16 @@
 
 <body>
 <header>
-  <label style="font-size:14px;color:#444;">v7.1 - Program:</label>
+  <label style="font-size:14px;color:#444;">Program:</label>
   <select id="program" disabled></select>
 
   <button id="run" disabled>Run ▶</button>
   <button id="stop">Stop ■</button>
+  <label class="alphaCtl" title="Turtle transparency (alpha)">
+    <span>α</span>
+    <input id="alphaSlider" type="range" min="0.25" max="0.9" step="0.01" value="0.25">
+    <span id="alphaVal">0.25</span>
+  </label>
   <button id="reload" disabled>Reload ↻</button>
 
   <div class="spacer"></div>
@@ -130,7 +135,21 @@
   const consoleEl = document.getElementById("console");
   const clearBtn = document.getElementById("clear");
 
-  const leftPane = document.getElementById("left");
+  
+  const alphaSlider = document.getElementById("alphaSlider");
+  const alphaVal = document.getElementById("alphaVal");
+  let turtleAlpha = alphaSlider ? parseFloat(alphaSlider.value) : 0.25;
+
+  if (alphaSlider && alphaVal) {
+    alphaVal.textContent = turtleAlpha.toFixed(2);
+    alphaSlider.addEventListener("input", () => {
+      turtleAlpha = parseFloat(alphaSlider.value);
+      alphaVal.textContent = turtleAlpha.toFixed(2);
+      // Update turtle immediately
+      redrawTurtle();
+    });
+  }
+const leftPane = document.getElementById("left");
   const rightPane = document.getElementById("right");
   const splitter = document.getElementById("splitter");
   const app = document.getElementById("app");
@@ -221,7 +240,7 @@
     octx.closePath();
 
     octx.fillStyle = turtleState.color || "#00ff66";
-    octx.globalAlpha = 0.35;
+    octx.globalAlpha = turtleAlpha;
     octx.fill();
     octx.globalAlpha = 1;
   }
