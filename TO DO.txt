@@ -5,8 +5,11 @@ non-turtle stuff
 it creates my_prog even if it already exists and I think it can write over the one you have if you are not careful.
 
 turtle stuff
+CURRENT THING
 ordering messed up.  If you draw squares and print "square 1" "square 2" etc.  The prints all happen instantly while the drawing is still happening.  Adding a seq with AI might help?
 The above thing was fixed, but it appeared to break how input was working. Need to go again with AI and tread carefully this time!
+This is messing up bob.reset() too.  The reset is happening before the drawing has finished.  New AI is working on this now...good luck to us all!
+CURRENT THING
 
 zoom in and out of drawing window
 drawing not deleted when window resized
