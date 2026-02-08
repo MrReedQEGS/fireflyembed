@@ -946,7 +946,7 @@
   let cancelToken = 0;
 
   function makeWorker() {
-    const w = new Worker("./py_worker_tracer.js?v=tracer1", { type: "module" });
+    const w = new Worker("./py_worker.js?v=tracer2", { type: "module" });
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
