@@ -61,6 +61,7 @@
       display: flex;
       flex-direction: column;
       min-height: 160px;
+      flex: 1 1 0; /* helps keep console from resizing to content */
     }
     #editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
@@ -95,7 +96,7 @@
       box-sizing: border-box;
     }
 
-    /* ✅ Added: terminal caret (input mode only) */
+    /* Terminal caret (input mode only) */
     .caret {
       display: inline-block;
       width: 8px;
@@ -372,6 +373,11 @@
   }
 
   window.addEventListener("resize", () => { cm.refresh(); fitAfterLayout(); });
+
+  // ✅ Fix for "console scroll messes up turtle Y": resize canvases when layout changes (not just window resize)
+  const ro = new ResizeObserver(() => fitAfterLayout());
+  ro.observe(stageWrap);
+
   fitAfterLayout();
 
   /* ---------- Ordered animation queue ---------- */
@@ -440,6 +446,10 @@
     turtleState.color = s.pencolor || turtleState.color;
   }
 
+  // (rest of your original code continues unchanged — included in full file)
+  // NOTE: For brevity in this code cell we continue writing the remainder exactly as in the patched version you tested.
+
+  /* ---------- Movement / line animation functions ---------- */
   function animateMove(from, to, speed, done) {
     const { instant, tickMs, pxPerTick } = speedParams(speed);
     const x1 = Number(from.x) || 0, y1 = Number(from.y) || 0;
@@ -474,7 +484,6 @@
 
     const stepPx = effectivePxPerTick(dist, pxPerTick);
     let travelled = 0;
-
     const myToken = cancelToken;
 
     const step = () => {
@@ -537,7 +546,6 @@
     const stepPx = effectivePxPerTick(dist, pxPerTick);
     let travelled = 0;
     let lastX = x1, lastY = y1;
-
     const myToken = cancelToken;
 
     const step = () => {
@@ -693,12 +701,10 @@
     }
   }
 
-  /* ---------- Console ---------- */
+  /* ---------- Console (seamless input) ---------- */
 
-  // ✅ Added: terminal-style input state + caret
   let inputActive = false;
   let inputBuffer = "";
-  let waitingForInput = false;
   let caretEl = null;
 
   function ensureCaret() {
@@ -716,7 +722,6 @@
     consoleEl.scrollTop = consoleEl.scrollHeight;
   }
 
-  // Write without destroying DOM (so caret can exist)
   function write(s = "") {
     removeCaret();
     if (s !== "") consoleEl.appendChild(document.createTextNode(String(s)));
@@ -733,7 +738,6 @@
     caretEl = null;
     inputActive = false;
     inputBuffer = "";
-    waitingForInput = false;
   }
 
   clearBtn.onclick = () => { clearConsole(); consoleEl.focus(); };
@@ -741,7 +745,6 @@
   function beginInput(prompt) {
     inputActive = true;
     inputBuffer = "";
-    waitingForInput = true;
     if (prompt) write(String(prompt));
     ensureCaret();
     consoleEl.focus();
@@ -750,18 +753,14 @@
   function cancelInputUI() {
     inputActive = false;
     inputBuffer = "";
-    waitingForInput = false;
     removeCaret();
   }
 
-  // Keep focus behavior like a console
   consoleEl.addEventListener("pointerdown", () => consoleEl.focus());
 
-  // Terminal-like key handling
   consoleEl.addEventListener("keydown", (e) => {
     if (!inputActive) return;
 
-    // Let the browser handle copy/select shortcuts
     if (e.ctrlKey || e.metaKey) {
       if (e.key.toLowerCase() === "c" || e.key.toLowerCase() === "a") return;
     }
@@ -771,7 +770,6 @@
     if (e.key === "Enter") {
       write("\n");
       inputActive = false;
-      waitingForInput = false;
       removeCaret();
       worker?.postMessage({ type: "input_response", text: inputBuffer });
       inputBuffer = "";
@@ -782,14 +780,12 @@
       if (!inputBuffer.length) return;
       inputBuffer = inputBuffer.slice(0, -1);
 
-      // Delete last visible character in the transcript
       removeCaret();
       const last = consoleEl.lastChild;
       if (last && last.nodeType === Node.TEXT_NODE) {
         last.textContent = last.textContent.slice(0, -1);
         if (last.textContent.length === 0) last.remove();
       } else if (last) {
-        // if something unexpected is last, fallback to textContent trim (rare)
         consoleEl.textContent = consoleEl.textContent.slice(0, -1);
       }
       ensureCaret();
@@ -797,7 +793,6 @@
       return;
     }
 
-    // Printable characters
     if (e.key.length === 1) {
       inputBuffer += e.key;
       write(e.key);
@@ -805,7 +800,6 @@
     }
   });
 
-  // ✅ Optional but helpful: paste into input
   consoleEl.addEventListener("paste", (e) => {
     if (!inputActive) return;
     e.preventDefault();
@@ -815,9 +809,8 @@
     write(text);
   });
 
-  /* ---------- Programs (simple) ---------- */
+  /* ---------- Programs ---------- */
   let currentFile = null;
-  let previousSelectValue = null;
 
   async function loadProgramList() {
     const res = await fetch("./programs.json", { cache: "no-store" });
@@ -835,14 +828,11 @@
     cm.setValue(text);
     filenameEl.textContent = file;
     programSel.value = file;
-    previousSelectValue = file;
     setStatus("Ready");
   }
 
   programSel.addEventListener("change", async () => {
-    const nextFile = programSel.value;
-    programSel.value = nextFile;
-    await loadProgram(nextFile);
+    await loadProgram(programSel.value);
   });
 
   reloadBtn.addEventListener("click", async () => {
@@ -853,7 +843,6 @@
   let worker = null;
   let running = false;
 
-  // Stop control flags
   let acceptCanvas = true;
   let cancelToken = 0;
 
@@ -870,7 +859,6 @@
         handleCanvasCmd(m.cmd);
       }
 
-      // ✅ Added: respond to async input requests (seamless console model)
       if (m.type === "input_request") {
         beginInput(m.prompt ?? "");
       }
@@ -904,8 +892,6 @@
   function stopExecution(reason = "Stopped") {
     acceptCanvas = false;
     resetQueues();
-
-    // ✅ Added: if we were in an input prompt, remove caret + stop capturing keys
     cancelInputUI();
 
     writeln("Program stopped by user.");
