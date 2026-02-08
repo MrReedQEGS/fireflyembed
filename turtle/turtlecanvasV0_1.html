@@ -284,8 +284,9 @@
   const drawQueue = [];
   let drawTimer = null;
 
-  // NEW: state buffering so turtle moves with drawn lines
-  let pendingTurtleState = null; // latest turtle state since last line
+  // IMPORTANT FIX: the next turtle state belongs to the last queued line
+  let lastLineWaitingForState = null;
+  let latestTurtleState = null;
 
   const SPEED_DELAY_SLOW = 450; // speed(1)
   const SPEED_DELAY_FAST = 12;  // speed(10)
@@ -329,8 +330,8 @@
 
       drawLineNow(cmd);
 
-      // Apply the turtle state that belongs to THIS drawn segment
-      applyTurtleState(cmd._turtle);
+      // apply the exact turtle state that belongs to this segment
+      applyTurtleState(cmd._turtle ?? null);
       redrawTurtle();
 
       if (delay === 0) {
@@ -350,7 +351,8 @@
       currentBg = cmd.color || "#111111";
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
-      pendingTurtleState = null;
+      lastLineWaitingForState = null;
+      latestTurtleState = null;
       canvasClear();
       redrawTurtle();
       return;
@@ -359,32 +361,37 @@
     if (cmd.type === "clear") {
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
-      pendingTurtleState = null;
+      lastLineWaitingForState = null;
+      latestTurtleState = null;
       canvasClear();
       redrawTurtle();
       return;
     }
 
-    if (cmd.type === "turtle") {
-      // Save latest state; it will be applied when the next line is drawn
-      pendingTurtleState = cmd;
-
-      // If no line animation is happening (turns/penup), update immediately
-      if (!drawQueue.length && !drawTimer) {
-        applyTurtleState(pendingTurtleState);
-        pendingTurtleState = null;
-        redrawTurtle();
-      }
+    if (cmd.type === "line") {
+      // Queue the line. The *next* turtle-state message belongs to this line.
+      cmd._turtle = null;
+      drawQueue.push(cmd);
+      lastLineWaitingForState = cmd;
+      scheduleQueue();
       return;
     }
 
-    if (cmd.type === "line") {
-      // Attach the most recent turtle state to this line so it animates correctly
-      cmd._turtle = pendingTurtleState;
-      pendingTurtleState = null;
+    if (cmd.type === "turtle") {
+      latestTurtleState = cmd;
 
-      drawQueue.push(cmd);
-      scheduleQueue();
+      // If a line is waiting for its turtle state, attach it to that line
+      if (lastLineWaitingForState && lastLineWaitingForState._turtle == null) {
+        lastLineWaitingForState._turtle = latestTurtleState;
+        lastLineWaitingForState = null;
+        return;
+      }
+
+      // Otherwise (turns/penup/show/hide), update immediately if not animating
+      if (!drawQueue.length && !drawTimer) {
+        applyTurtleState(latestTurtleState);
+        redrawTurtle();
+      }
       return;
     }
   }
@@ -406,7 +413,6 @@
   }
   function writeln(s="") { write(s + "\n"); }
   function clearConsole() { consoleEl.textContent = ""; }
-
   clearBtn.onclick = () => { clearConsole(); consoleEl.focus(); };
 
   /* ---------- Inline input ---------- */
@@ -503,8 +509,8 @@
   let running = false;
 
   function makeWorker() {
-    // cache-bust to avoid Chromebook caching worker too aggressively
-    const w = new Worker("./py_worker.js?v=cursor2", { type: "module" });
+    // bump this if you ever change worker again
+    const w = new Worker("./py_worker.js?v=cursor3", { type: "module" });
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
@@ -544,7 +550,8 @@
 
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
-      pendingTurtleState = null;
+      lastLineWaitingForState = null;
+      latestTurtleState = null;
 
       writeln("\nProgram stopped by user.");
       try { worker?.terminate(); } catch {}
@@ -771,9 +778,9 @@
 
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
-    pendingTurtleState = null;
+    lastLineWaitingForState = null;
+    latestTurtleState = null;
 
-    // Reset visuals immediately
     currentBg = "#111111";
     canvasClear();
     turtleState.x = 0; turtleState.y = 0; turtleState.heading = 0;
