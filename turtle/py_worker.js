@@ -82,7 +82,11 @@ def update():
 
 def _cmd(**kwargs):
     global _pending_cmds
+    # When tracer(0), we buffer commands and draw "instantly" on update()
+    # by forcing line speed to 0 (JS treats speed<=0 as instant).
     if _tracer_n == 0:
+        if kwargs.get("type") == "line":
+            kwargs["speed"] = 0
         _pending_cmds.append(kwargs)
     else:
         __canvas_cmd__(kwargs)
