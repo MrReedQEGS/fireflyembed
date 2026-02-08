@@ -60,6 +60,23 @@ import math, types, sys
 def _cmd(**kwargs):
     __canvas_cmd__(kwargs)
 
+TRACER_N = 1
+
+def tracer(n=None, delay=None):
+    global TRACER_N
+    if n is None:
+        return TRACER_N
+    try:
+        n = int(n)
+    except Exception:
+        return TRACER_N
+    TRACER_N = n
+    _cmd(type="tracer", n=TRACER_N, delay=delay)
+    return TRACER_N
+
+def update():
+    _cmd(type="update")
+
 def _emit_state(t):
     _cmd(type="turtle",
          x=t.x, y=t.y,
@@ -244,6 +261,8 @@ class Screen:
     def bgcolor(self, c): bgcolor(c)
     def clearscreen(self): clear()
     def reset(self): reset()
+    def tracer(self, n=None, delay=None): return tracer(n, delay)
+    def update(self): return update()
 
 # Create module object "turtle"
 turtle = types.ModuleType("turtle")
