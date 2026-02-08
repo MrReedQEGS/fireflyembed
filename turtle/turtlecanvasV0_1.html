@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Python + Turtle Runner (Editor + Turtle + Console)</title>
+  <title>Python Runner (Editor + Console)</title>
 
   <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
@@ -21,8 +21,7 @@
     select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 8px; background: white; font-size: 14px; }
 
     #app { flex: 1; display: flex; min-height: 0; width: 100%; }
-    #left, #right { display: flex; flex-direction: column; min-height: 0; flex: 1 1 0; min-width: 240px; }
-    #left { border-right: 1px solid #ddd; }
+    #left, #right { display: flex; flex-direction: column; min-height: 0; flex: 1 1 0; min-width: 220px; }
 
     .pane-title {
       padding: 6px 12px;
@@ -45,565 +44,378 @@
       user-select: none;
       touch-action: none;
     }
+    #splitter:hover { background: #e9e9e9; }
 
     #editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
-    .CodeMirror-gutters { border-right: 1px solid #eee; }
+    .CodeMirror-gutters { background: #fafafa; border-right: 1px solid #eee; }
 
-    #stageWrap { flex: 1; min-height: 0; background: #111; position: relative; }
-    #stage, #overlay {
+    #stageWrap { flex: 1; min-height: 0; position: relative; background: #fff; overflow: hidden; }
+    #stage { position: absolute; inset: 0; width: 100%; height: 100%; background: #fff; }
+
+    #consoleDock {
       position: absolute;
-      left: 12px; top: 12px;
-      width: calc(100% - 24px);
-      height: calc(100% - 24px);
-      border: 1px solid #333;
-      display: block;
-      box-sizing: border-box;
+      right: 14px;
+      bottom: 14px;
+      width: min(420px, 46vw);
+      height: min(240px, 40vh);
+      border: 1px solid #ddd;
+      background: rgba(255,255,255,.95);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
-    #stage { background: #111; z-index: 1; }
-    #overlay { z-index: 5; pointer-events: none; }
-
-    #consoleWrap { height: 240px; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
+    #consoleTitle {
+      padding: 6px 10px;
+      background: #f6f6f6;
+      border-bottom: 1px solid #e6e6e6;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #consoleTitle .spacer { flex: 1; }
     #console {
-      height: 100%;
-      padding: 12px;
+      flex: 1;
+      padding: 8px 10px;
       overflow: auto;
-      color: #eaeaea;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 14px;
-      line-height: 1.4;
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       white-space: pre-wrap;
-      outline: none;
-      cursor: text;
-      background: #0b0b0b;
-      box-sizing: border-box;
     }
+    #consoleInputRow {
+      display: none;
+      border-top: 1px solid #eee;
+      padding: 6px 8px;
+      gap: 6px;
+      align-items: center;
+      background: #fff;
+    }
+    #consolePrompt {
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: #444;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 55%;
+    }
+    #consoleInput {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    #consoleSend {
+      padding: 6px 10px;
+    }
+
+    /* simple help text */
+    .hint { color:#777; font-size:12px; padding: 6px 12px 10px; border-top: 1px solid #eee; }
   </style>
 </head>
 
 <body>
 <header>
-  <label style="font-size:14px;color:#444;">Program:</label>
-  <select id="program" disabled></select>
+  <button id="runBtn" disabled>Run</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <span id="status">Loading…</span>
+  <span class="spacer"></span>
 
-  <button id="run" disabled>Run ▶</button>
-  <button id="stop" disabled>Stop ■</button>
-  <button id="reload" disabled>Reload ↻</button>
+  <label style="display:flex; gap:8px; align-items:center;">
+    <span style="font-size:13px; color:#555;">Program:</span>
+    <select id="programSel"></select>
+  </label>
 
-  <div class="spacer"></div>
-  <div id="status">Loading…</div>
+  <button id="uploadBtn">Upload…</button>
+  <input id="fileInput" type="file" accept=".py,.txt" style="display:none" />
 </header>
 
 <div id="app">
-  <section id="left">
-    <div class="pane-title" id="filename">Editor</div>
+  <div id="left">
+    <div class="pane-title">
+      <strong>Editor</strong>
+      <span class="spacer"></span>
+      <span id="filename" style="font-size:12px; color:#666;"></span>
+      <button id="saveBtn" disabled>Save</button>
+      <button id="resetBtn" disabled>Reset</button>
+    </div>
     <div id="editorWrap"><textarea id="editor"></textarea></div>
-  </section>
+    <div class="hint">Ctrl-/ to toggle comment · Ctrl-S to Save</div>
+  </div>
 
   <div id="splitter" title="Drag to resize"></div>
 
-  <section id="right">
-    <div class="pane-title">Turtle</div>
+  <div id="right">
+    <div class="pane-title">
+      <strong>Stage</strong>
+      <span class="spacer"></span>
+      <button id="clearStageBtn">Clear</button>
+    </div>
+
     <div id="stageWrap">
       <canvas id="stage"></canvas>
-      <canvas id="overlay"></canvas>
-    </div>
 
-    <div class="pane-title">
-      <span>Console</span>
-      <div class="spacer"></div>
-      <button id="clear">Clear console</button>
+      <div id="consoleDock">
+        <div id="consoleTitle">
+          <strong>Python output</strong>
+          <span class="spacer"></span>
+          <button id="clearConsoleBtn">Clear</button>
+        </div>
+
+        <div id="console" tabindex="0"></div>
+
+        <div id="consoleInputRow">
+          <div id="consolePrompt"></div>
+          <input id="consoleInput" type="text" autocomplete="off" />
+          <button id="consoleSend">Send</button>
+        </div>
+      </div>
     </div>
-    <div id="consoleWrap">
-      <div id="console" tabindex="0"></div>
-    </div>
-  </section>
+  </div>
 </div>
 
-<script type="module">
-  const runBtn = document.getElementById("run");
-  const stopBtn = document.getElementById("stop");
-  const reloadBtn = document.getElementById("reload");
+<script>
+(async () => {
+  /* ---------- Elements ---------- */
+  const runBtn = document.getElementById("runBtn");
+  const stopBtn = document.getElementById("stopBtn");
   const statusEl = document.getElementById("status");
-  const programSel = document.getElementById("program");
-  const filenameEl = document.getElementById("filename");
-  const consoleEl = document.getElementById("console");
-  const clearBtn = document.getElementById("clear");
 
+  const programSel = document.getElementById("programSel");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const fileInput = document.getElementById("fileInput");
+
+  const filenameEl = document.getElementById("filename");
+  const saveBtn = document.getElementById("saveBtn");
+  const resetBtn = document.getElementById("resetBtn");
+
+  const stage = document.getElementById("stage");
+  const stageWrap = document.getElementById("stageWrap");
+  const clearStageBtn = document.getElementById("clearStageBtn");
+
+  const consoleDock = document.getElementById("consoleDock");
+  const consoleEl = document.getElementById("console");
+  const clearConsoleBtn = document.getElementById("clearConsoleBtn");
+
+  const consoleInputRow = document.getElementById("consoleInputRow");
+  const consolePromptEl = document.getElementById("consolePrompt");
+  const consoleInput = document.getElementById("consoleInput");
+  const consoleSend = document.getElementById("consoleSend");
+
+  const splitter = document.getElementById("splitter");
   const leftPane = document.getElementById("left");
   const rightPane = document.getElementById("right");
-  const splitter = document.getElementById("splitter");
-  const app = document.getElementById("app");
 
-  const canvas = document.getElementById("stage");
-  const ctx = canvas.getContext("2d");
-  const overlay = document.getElementById("overlay");
-  const octx = overlay.getContext("2d");
+  /* ---------- Helpers ---------- */
+  function setStatus(t) { statusEl.textContent = t; }
 
-  const setStatus = (s) => statusEl.textContent = s;
+  function writeln(s) {
+    const text = String(s ?? "");
+    consoleEl.textContent += text;
+    if (!text.endsWith("\n")) consoleEl.textContent += "\n";
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  function clearConsole() {
+    consoleEl.textContent = "";
+  }
+
+  clearConsoleBtn.onclick = () => clearConsole();
+
+  /* ---------- Stage sizing ---------- */
+  function resizeCanvas() {
+    const rect = stageWrap.getBoundingClientRect();
+    stage.width = Math.max(1, Math.floor(rect.width));
+    stage.height = Math.max(1, Math.floor(rect.height));
+    // If your turtle renderer uses the canvas, it should read stage.width/height.
+  }
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  clearStageBtn.onclick = () => {
+    const ctx = stage.getContext("2d");
+    ctx.clearRect(0, 0, stage.width, stage.height);
+  };
+
+  /* ---------- Splitter (resizable panes) ---------- */
+  let dragging = false;
+  splitter.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    splitter.setPointerCapture(e.pointerId);
+  });
+  splitter.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const rect = document.getElementById("app").getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.min(80, Math.max(20, (x / rect.width) * 100));
+    leftPane.style.flex = `0 0 ${pct}%`;
+    rightPane.style.flex = `0 0 ${100 - pct}%`;
+    resizeCanvas();
+    cm.refresh();
+  });
+  splitter.addEventListener("pointerup", () => dragging = false);
+  splitter.addEventListener("pointercancel", () => dragging = false);
 
   /* ---------- Editor ---------- */
   const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
     mode: "python",
     lineNumbers: true,
+    matchBrackets: true,
     indentUnit: 4,
     tabSize: 4,
-    smartIndent: true,
-    matchBrackets: true,
     extraKeys: {
-      "Tab": cm => cm.replaceSelection("    ", "end"),
-      "Shift-Tab": cm => cm.indentSelection("subtract")
+      "Ctrl-/": "toggleComment",
+      "Cmd-/": "toggleComment",
+      "Ctrl-S": () => saveCurrent(),
+      "Cmd-S": () => saveCurrent(),
     }
   });
-  cm.setSize(null, "100%");
 
-  /* ---------- Splitter ---------- */
-  let dragging = false;
-  function setLeftWidth(px) {
-    const total = app.getBoundingClientRect().width;
-    const minLeft = 240;
-    const minRight = 280;
-    const maxLeft = total - 8 - minRight;
-    const clamped = Math.max(minLeft, Math.min(px, maxLeft));
-    leftPane.style.flex = `0 0 ${clamped}px`;
-    rightPane.style.flex = `1 1 0`;
-    cm.refresh();
-    fitAfterLayout();
-  }
-  splitter.addEventListener("pointerdown", (e) => {
-    dragging = true;
-    splitter.setPointerCapture(e.pointerId);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  });
-  splitter.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    const rect = app.getBoundingClientRect();
-    setLeftWidth(e.clientX - rect.left);
-  });
-  splitter.addEventListener("pointerup", (e) => {
-    dragging = false;
-    try { splitter.releasePointerCapture(e.pointerId); } catch {}
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-  });
-
-  /* ---------- Turtle state (displayed) ---------- */
-  const turtleState = { x: 0, y: 0, heading: 0, visible: true, color: "#00ff66" };
-  let logicalState = { x: 0, y: 0, heading: 0, visible: true, pencolor: "#00ff66" };
-
-  function toCanvasXY(x, y) {
-    const rect = canvas.getBoundingClientRect();
-    return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
-  }
-
-  function overlayClear() {
-    const rect = overlay.getBoundingClientRect();
-    octx.clearRect(0, 0, rect.width, rect.height);
-  }
-
-  function redrawTurtle() {
-    overlayClear();
-    if (!turtleState.visible) return;
-
-    const p = toCanvasXY(turtleState.x, turtleState.y);
-    const size = 12;
-    const ang = (turtleState.heading * Math.PI) / 180;
-
-    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
-    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
-    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
-
-    octx.beginPath();
-    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
-    octx.lineTo(p.cx + left.x, p.cy + left.y);
-    octx.lineTo(p.cx + right.x, p.cy + right.y);
-    octx.closePath();
-
-    octx.fillStyle = turtleState.color || "#00ff66";
-    octx.globalAlpha = 0.9;
-    octx.fill();
-    octx.globalAlpha = 1;
-  }
-
-  /* ---------- Canvas sizing ---------- */
-  let currentBg = "#111111";
-
-  function fitOneCanvas(c, context) {
-    const rect = c.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    c.width = Math.max(1, Math.floor(rect.width * dpr));
-    c.height = Math.max(1, Math.floor(rect.height * dpr));
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-
-  function canvasClear() {
-    const rect = canvas.getBoundingClientRect();
-    ctx.fillStyle = currentBg;
-    ctx.fillRect(0, 0, rect.width, rect.height);
-  }
-
-  function fitCanvases() {
-    fitOneCanvas(canvas, ctx);
-    fitOneCanvas(overlay, octx);
-    redrawTurtle();
-  }
-
-  function fitAfterLayout() {
-    requestAnimationFrame(() => {
-      fitCanvases();
-      requestAnimationFrame(() => fitCanvases());
-    });
-  }
-
-  window.addEventListener("resize", () => { cm.refresh(); fitAfterLayout(); });
-  fitAfterLayout();
-
-  /* ---------- Ordered animation queue ---------- */
-
-  const q = [];
-  let animating = false;
-  let timer = null;
-
-  let lastLineWaitingForState = null;
-  let lastKnownSpeed = 10;
-
-  // ✅ NEW: guarantee at least this many ticks for any non-zero-distance motion
-  const MIN_TICKS_PER_SEGMENT = 8;
-
-  function speedParams(speed) {
-    let s = Number(speed);
-    if (!Number.isFinite(s)) s = 10;
-    if (s <= 0) return { instant: true, tickMs: 0, pxPerTick: Infinity };
-    if (s > 10) s = 10;
-
-    const tickMs = Math.round(140 - s * 12);      // 128ms .. 20ms
-    const pxPerTick = Math.round(2 + s * 2.6);    // 5px .. 28px
-    return { instant: false, tickMs, pxPerTick };
-  }
-
-  // ✅ NEW: cap pxPerTick based on distance so short lines still animate
-  function effectivePxPerTick(dist, pxPerTick) {
-    // ensure at least MIN_TICKS_PER_SEGMENT steps for this distance
-    const maxPxThisSegment = Math.max(1, dist / MIN_TICKS_PER_SEGMENT);
-    return Math.min(pxPerTick, maxPxThisSegment);
-  }
-
-  function drawSegment(x1, y1, x2, y2, color, width) {
-    const a = toCanvasXY(x1, y1);
-    const b = toCanvasXY(x2, y2);
-    ctx.strokeStyle = color || "#00ff66";
-    ctx.lineWidth = Number(width || 2);
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(a.cx, a.cy);
-    ctx.lineTo(b.cx, b.cy);
-    ctx.stroke();
-  }
-
-  function applyStateToTurtle(s) {
-    if (!s) return;
-    turtleState.x = Number(s.x) || 0;
-    turtleState.y = Number(s.y) || 0;
-    turtleState.heading = Number(s.heading) || 0;
-    turtleState.visible = !!s.visible;
-    turtleState.color = s.pencolor || turtleState.color;
-  }
-
-  function animateMove(from, to, speed, done) {
-    const { instant, tickMs, pxPerTick } = speedParams(speed);
-    const x1 = Number(from.x) || 0, y1 = Number(from.y) || 0;
-    const x2 = Number(to.x) || 0, y2 = Number(to.y) || 0;
-
-    const heading = Number(to.heading) || turtleState.heading;
-    const visible = !!to.visible;
-    const tColor = to.pencolor || turtleState.color;
-
-    if (instant) {
-      turtleState.x = x2; turtleState.y = y2;
-      turtleState.heading = heading;
-      turtleState.visible = visible;
-      turtleState.color = tColor;
-      redrawTurtle();
-      done();
-      return;
-    }
-
-    const dx = x2 - x1, dy = y2 - y1;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist < 0.5) {
-      turtleState.x = x2; turtleState.y = y2;
-      turtleState.heading = heading;
-      turtleState.visible = visible;
-      turtleState.color = tColor;
-      redrawTurtle();
-      done();
-      return;
-    }
-
-    const stepPx = effectivePxPerTick(dist, pxPerTick);
-    let travelled = 0;
-
-    const step = () => {
-      const nextTravel = Math.min(dist, travelled + stepPx);
-      const t = nextTravel / dist;
-
-      turtleState.x = x1 + dx * t;
-      turtleState.y = y1 + dy * t;
-      turtleState.heading = heading;
-      turtleState.visible = visible;
-      turtleState.color = tColor;
-      redrawTurtle();
-
-      travelled = nextTravel;
-
-      if (travelled >= dist - 1e-6) {
-        turtleState.x = x2; turtleState.y = y2;
-        redrawTurtle();
-        done();
-        return;
-      }
-
-      timer = setTimeout(step, tickMs);
-    };
-    step();
-  }
-
-  function animateLine(cmd, done) {
-    const { instant, tickMs, pxPerTick } = speedParams(cmd.speed);
-    const endState = cmd.endState;
-
-    const heading = Number(endState.heading) || turtleState.heading;
-    const visible = !!endState.visible;
-    const tColor = endState.pencolor || turtleState.color;
-
-    if (instant) {
-      drawSegment(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
-      applyStateToTurtle(endState);
-      redrawTurtle();
-      done();
-      return;
-    }
-
-    const x1 = Number(cmd.x1) || 0, y1 = Number(cmd.y1) || 0;
-    const x2 = Number(cmd.x2) || 0, y2 = Number(cmd.y2) || 0;
-    const dx = x2 - x1, dy = y2 - y1;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist < 0.5) {
-      drawSegment(x1, y1, x2, y2, cmd.color, cmd.width);
-      applyStateToTurtle(endState);
-      redrawTurtle();
-      done();
-      return;
-    }
-
-    const stepPx = effectivePxPerTick(dist, pxPerTick);
-    let travelled = 0;
-    let lastX = x1, lastY = y1;
-
-    const step = () => {
-      const nextTravel = Math.min(dist, travelled + stepPx);
-      const t = nextTravel / dist;
-
-      const curX = x1 + dx * t;
-      const curY = y1 + dy * t;
-
-      drawSegment(lastX, lastY, curX, curY, cmd.color, cmd.width);
-
-      turtleState.x = curX;
-      turtleState.y = curY;
-      turtleState.heading = heading;
-      turtleState.visible = visible;
-      turtleState.color = tColor;
-      redrawTurtle();
-
-      travelled = nextTravel;
-      lastX = curX; lastY = curY;
-
-      if (travelled >= dist - 1e-6) {
-        applyStateToTurtle(endState);
-        redrawTurtle();
-        done();
-        return;
-      }
-
-      timer = setTimeout(step, tickMs);
-    };
-    step();
-  }
-
-  function runQueue() {
-    if (animating) return;
-    animating = true;
-
-    const next = () => {
-      if (!q.length) {
-        animating = false;
-        timer = null;
-        return;
-      }
-
-      const item = q.shift();
-
-      if (item.kind === "state") {
-        applyStateToTurtle(item.state);
-        redrawTurtle();
-        next();
-        return;
-      }
-
-      if (item.kind === "move") {
-        animateMove(item.from, item.to, item.speed, next);
-        return;
-      }
-
-      if (item.kind === "line") {
-        if (!item.endState) {
-          q.unshift(item);
-          animating = false;
-          return;
-        }
-        animateLine(item, next);
-        return;
-      }
-    };
-
-    next();
-  }
-
-  function resetQueues() {
-    if (timer) { clearTimeout(timer); timer = null; }
-    q.length = 0;
-    animating = false;
-    lastLineWaitingForState = null;
-  }
-
-  function handleCanvasCmd(cmd) {
-    if (!cmd || !cmd.type) return;
-
-    if (cmd.type === "bg") {
-      currentBg = cmd.color || "#111111";
-      resetQueues();
-      canvasClear();
-      redrawTurtle();
-      return;
-    }
-
-    if (cmd.type === "clear") {
-      resetQueues();
-      canvasClear();
-      redrawTurtle();
-      return;
-    }
-
-    if (cmd.type === "line") {
-      lastKnownSpeed = cmd.speed ?? lastKnownSpeed;
-
-      const lineItem = {
-        kind: "line",
-        x1: cmd.x1, y1: cmd.y1,
-        x2: cmd.x2, y2: cmd.y2,
-        color: cmd.color,
-        width: cmd.width,
-        speed: cmd.speed,
-        endState: null
-      };
-
-      q.push(lineItem);
-      lastLineWaitingForState = lineItem;
-      runQueue();
-      return;
-    }
-
-    if (cmd.type === "turtle") {
-      const nextState = {
-        x: Number(cmd.x) || 0,
-        y: Number(cmd.y) || 0,
-        heading: Number(cmd.heading) || 0,
-        visible: !!cmd.visible,
-        pencolor: cmd.pencolor || logicalState.pencolor
-      };
-
-      if (lastLineWaitingForState && !lastLineWaitingForState.endState) {
-        lastLineWaitingForState.endState = nextState;
-        lastLineWaitingForState = null;
-        logicalState = nextState;
-        runQueue();
-        return;
-      }
-
-      const moved = (nextState.x !== logicalState.x) || (nextState.y !== logicalState.y);
-      const headingChanged = nextState.heading !== logicalState.heading;
-      const visChanged = nextState.visible !== logicalState.visible;
-      const colorChanged = nextState.pencolor !== logicalState.pencolor;
-
-      if (moved) {
-        q.push({ kind: "move", from: logicalState, to: nextState, speed: lastKnownSpeed });
-      } else if (headingChanged || visChanged || colorChanged) {
-        q.push({ kind: "state", state: nextState });
-      }
-
-      logicalState = nextState;
-      runQueue();
-      return;
-    }
-  }
-
-  /* ---------- Console ---------- */
-  function writeln(s="") { consoleEl.textContent += s + "\n"; consoleEl.scrollTop = consoleEl.scrollHeight; }
-  function clearConsole() { consoleEl.textContent = ""; }
-  clearBtn.onclick = () => { clearConsole(); consoleEl.focus(); };
-
-  /* ---------- Programs (simple) ---------- */
-  let currentFile = null;
-  let previousSelectValue = null;
+  /* ---------- Programs + Upload ---------- */
+  const uploadedText = new Map();   // filename -> content
+  const originals = new Map();      // filename -> original content
+  const fileHandles = new Map();    // filename -> File
+  let currentFile = "";
+  let previousSelectValue = "";
 
   async function loadProgramList() {
-    const res = await fetch("./programs.json", { cache: "no-store" });
-    const files = await res.json();
+    // Your original version probably expects a file list next to this HTML.
+    // We'll keep your existing "programs.txt" behavior:
+    // programs.txt should contain one filename per line.
+    let list = [];
+    try {
+      const res = await fetch("./programs.txt", { cache: "no-store" });
+      if (res.ok) {
+        list = (await res.text()).split("\n").map(s => s.trim()).filter(Boolean);
+      }
+    } catch {}
+    if (!list.length) list = ["example.py"];
+
     programSel.innerHTML = "";
-    for (const f of files) programSel.add(new Option(f, f));
-    return files[0];
+    for (const f of list) {
+      const opt = document.createElement("option");
+      opt.value = f;
+      opt.textContent = f;
+      programSel.appendChild(opt);
+    }
+    previousSelectValue = list[0];
+    return list[0];
   }
 
-  async function loadProgram(file) {
-    setStatus("Loading " + file + "…");
-    const res = await fetch("./" + file, { cache: "no-store" });
-    const text = await res.text();
-    currentFile = file;
-    cm.setValue(text);
-    filenameEl.textContent = file;
-    programSel.value = file;
-    previousSelectValue = file;
-    setStatus("Ready");
+  async function readFromHandle(file) {
+    return await file.text();
   }
 
-  programSel.addEventListener("change", async () => {
-    const nextFile = programSel.value;
-    programSel.value = nextFile;
-    await loadProgram(nextFile);
+  function setSaveButtons() {
+    const text = cm.getValue();
+    const orig = originals.get(currentFile) ?? "";
+    const dirty = text !== orig;
+    saveBtn.disabled = !dirty;
+    resetBtn.disabled = !dirty;
+  }
+
+  cm.on("change", () => setSaveButtons());
+
+  async function saveCurrent() {
+    if (!currentFile) return;
+    uploadedText.set(currentFile, cm.getValue());
+    originals.set(currentFile, cm.getValue());
+    setSaveButtons();
+    setStatus("Saved");
+  }
+
+  function resetCurrent() {
+    if (!currentFile) return;
+    const orig = originals.get(currentFile) ?? "";
+    cm.setValue(orig);
+    setSaveButtons();
+    setStatus("Reset");
+  }
+
+  saveBtn.onclick = () => saveCurrent();
+  resetBtn.onclick = () => resetCurrent();
+
+  uploadBtn.onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const f = fileInput.files?.[0];
+    if (!f) return;
+
+    const text = await f.text();
+    uploadedText.set(f.name, text);
+    originals.set(f.name, text);
+    fileHandles.set(f.name, f);
+
+    // Add to dropdown if needed
+    if (![...programSel.options].some(o => o.value === f.name)) {
+      const opt = document.createElement("option");
+      opt.value = f.name;
+      opt.textContent = f.name;
+      programSel.appendChild(opt);
+    }
+
+    await loadProgram(f.name);
+    fileInput.value = "";
+  };
+
+  /* ---------- Console input (async input()) ---------- */
+  let waitingForInput = false;
+
+  function beginInput(promptText) {
+    waitingForInput = true;
+    consoleInputRow.style.display = "flex";
+    consolePromptEl.textContent = promptText || "";
+    consoleInput.value = "";
+    consoleInput.focus();
+  }
+
+  function removeCaret() {
+    // no-op placeholder (kept for compatibility with your previous structure)
+  }
+
+  function cancelInputIfAny() {
+    if (!waitingForInput) return;
+    waitingForInput = false;
+    consoleInputRow.style.display = "none";
+    consolePromptEl.textContent = "";
+    consoleInput.value = "";
+  }
+
+  function sendInput() {
+    if (!waitingForInput) return;
+    const val = consoleInput.value;
+    cancelInputIfAny();
+    worker?.postMessage({ type: "input_response", text: val });
+  }
+
+  consoleSend.onclick = () => sendInput();
+  consoleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendInput();
+    }
   });
 
-  reloadBtn.addEventListener("click", async () => {
-    await loadProgram(programSel.value);
-  });
-
-  /* ---------- Worker ---------- */
+  /* ---------- Worker run control ---------- */
   let worker = null;
   let running = false;
 
-  function makeWorker() {
-    const w = new Worker("./py_worker.js?v=cursor8", { type: "module" });
+  // Each Run gets a unique id so Stop can ignore late messages from older runs
+  let execId = 0;
+  let activeExecId = 0;
 
+  function makeWorker() {
+    const w = new Worker("./py_worker.js", { type: "module" });
     w.onmessage = (ev) => {
       const m = ev.data || {};
+
+      // Ignore messages from a previous run (after Stop / new Run)
+      // Messages with runId=0 (e.g., "ready", load status) are always accepted.
+      if (m.runId && m.runId !== activeExecId) return;
+
       if (m.type === "stdout") writeln(m.text ?? "");
       if (m.type === "stderr") writeln(m.text ?? "");
       if (m.type === "status") setStatus(m.text ?? "");
-      if (m.type === "canvas_cmd") handleCanvasCmd(m.cmd);
-
       if (m.type === "ready") {
         setStatus("Ready");
         runBtn.disabled = false;
@@ -622,57 +434,112 @@
         setStatus("Error");
         writeln(String(m.text ?? ""));
       }
+      if (m.type === "input_request") {
+        beginInput(m.prompt ?? "");
+      }
     };
-
     w.postMessage({ type: "init" });
     return w;
   }
 
   function stopExecution(reason = "Stopped") {
-    if (!running) return;
-    resetQueues();
-    writeln("Program stopped by user.");
+    const shouldAnnounce = (running || waitingForInput);
+
+    // Invalidate current run id so late worker messages are ignored
+    execId += 1;
+    activeExecId = execId;
+
+    cancelInputIfAny();
+
+    if (shouldAnnounce) {
+      // EXACT text requested
+      writeln("Program stopped by user");
+    }
+
     try { worker?.terminate(); } catch {}
     worker = makeWorker();
+
     running = false;
     runBtn.disabled = false;
     stopBtn.disabled = true;
     setStatus(reason);
+
+    // Optional hook if you also have main-thread animation queues to stop
+    window.dispatchEvent(new CustomEvent("py-program-stopped", { detail: { runId: activeExecId } }));
   }
 
+  // Stop button
   stopBtn.addEventListener("click", () => stopExecution("Stopped"));
+
+  // start worker immediately
   worker = makeWorker();
 
+  async function loadProgram(file) {
+    stopExecution("Stopped");
+
+    removeCaret();
+    clearConsole();
+    setStatus("Loading " + file + "…");
+
+    let text;
+    if (fileHandles.has(file)) {
+      text = await readFromHandle(fileHandles.get(file));
+      uploadedText.set(file, text);
+      originals.set(file, text);
+    } else if (uploadedText.has(file)) {
+      text = uploadedText.get(file);
+      originals.set(file, text);
+    } else {
+      const res = await fetch("./" + file, { cache: "no-store" });
+      text = await res.text();
+      originals.set(file, text);
+    }
+
+    currentFile = file;
+    cm.setValue(text);
+    filenameEl.textContent = file;
+
+    programSel.value = file;
+    previousSelectValue = file;
+
+    if (uploadedText.has(file)) setStatus(fileHandles.has(file) ? "Ready (opened)" : "Ready (uploaded)");
+    else setStatus("Ready");
+
+    setSaveButtons();
+    consoleEl.focus();
+  }
+
+  programSel.addEventListener("change", async () => {
+    const next = programSel.value;
+    if (!next) return;
+    previousSelectValue = next;
+    await loadProgram(next);
+  });
+
+  /* ---------- Run ---------- */
   runBtn.onclick = () => {
     clearConsole();
-    resetQueues();
+    if (!worker) worker = makeWorker();
 
-    currentBg = "#111111";
-    canvasClear();
-
-    logicalState = { x: 0, y: 0, heading: 0, visible: true, pencolor: "#00ff66" };
-    turtleState.x = 0; turtleState.y = 0; turtleState.heading = 0;
-    turtleState.visible = true; turtleState.color = "#00ff66";
-    redrawTurtle();
+    execId += 1;
+    activeExecId = execId;
 
     running = true;
     runBtn.disabled = true;
     stopBtn.disabled = false;
     setStatus("Running…");
-    worker.postMessage({ type: "run", code: cm.getValue() });
+    worker.postMessage({ type: "run", code: cm.getValue(), runId: activeExecId });
+    consoleEl.focus();
   };
 
-  /* ---------- Init ---------- */
-  (async () => {
-    setStatus("Loading…");
-    const first = await loadProgramList();
-    await loadProgram(first);
-    programSel.disabled = false;
-    runBtn.disabled = false;
-    reloadBtn.disabled = false;
-    stopBtn.disabled = true;
-    setStatus("Ready");
-  })();
+  /* ---------- UI init ---------- */
+  const first = await loadProgramList();
+  await loadProgram(first);
+
+  // enable UI (worker loads async)
+  setStatus("Loading Python…");
+})();
 </script>
+
 </body>
 </html>
