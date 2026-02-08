@@ -956,6 +956,17 @@
   let acceptCanvas = true;
   let cancelToken = 0;
 
+  function extractFriendlyStopMessage(text) {
+    const s = String(text ?? "");
+    // Pull out our friendly stop reasons from noisy Python tracebacks.
+    for (const line of s.split("\n")) {
+      if (line.includes("Stopped: turtle command limit exceeded")) return line.trim();
+      if (line.includes("Stopped: time limit exceeded")) return line.trim();
+    }
+    return null;
+  }
+
+
   function makeWorker() {
     const w = new Worker("./py_worker.js?v=tracer4", { type: "module" });
 
@@ -992,8 +1003,14 @@
         if (runTimeoutId) { clearTimeout(runTimeoutId); runTimeoutId = null; }
         runBtn.disabled = false;
         stopBtn.disabled = false;
-        setStatus("Error");
-        writeln(String(m.text ?? ""));
+        const friendly = extractFriendlyStopMessage(m.text);
+        if (friendly) {
+          setStatus("Stopped");
+          writeln(friendly + "\n");
+        } else {
+          setStatus("Error");
+          writeln(String(m.text ?? ""));
+        }
         cancelInputUI();
       }
     };
