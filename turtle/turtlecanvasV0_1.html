@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Python + Turtle Runner (Editor + Canvas + Console)</title>
+  <title>Python + Turtle Runner (Editor + Turtle + Console)</title>
 
   <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
@@ -275,33 +275,37 @@
   window.addEventListener("resize", () => { cm.refresh(); fitAfterLayout(); });
   fitAfterLayout();
 
-  /* ---------- Turtle animation queue (speed) ---------- */
+  /* ---------- Smooth line animation ---------- */
+
+  // Queue of "line" commands. Each command will be animated in small chunks.
   const drawQueue = [];
-  let drawTimer = null;
+  let drawTimer = null;     // timeout id for animation loop
+  let animatingLine = false;
 
-  // The next turtle state after a line belongs to that line.
+  // Pairing: next turtle state after a line belongs to that line.
   let lastLineWaitingForState = null;
-
-  // NEW: if a turtle-only state arrives during animation (e.g. left/right after last line),
-  // we apply it when the animation finishes.
+  // Turtle-only state that arrives during animation gets applied when queue ends.
   let deferredFinalTurtleState = null;
 
-  const SPEED_DELAY_SLOW = 450; // speed(1)
-  const SPEED_DELAY_FAST = 12;  // speed(10)
+  // Speed control: 0 instant, 1..10 smooth and evenly spaced
+  function speedParams(speed) {
+    let s = Number(speed);
+    if (!Number.isFinite(s)) s = 10;
+    if (s <= 0) return { tickMs: 0, pxPerTick: Infinity };
+    if (s > 10) s = 10;
 
-  function speedToDelay(speed) {
-    const n = Number(speed);
-    if (n === 0) return 0;
-    const s = Math.max(1, Math.min(10, Number.isFinite(n) ? n : 10));
-    const t = (s - 1) / 9;
-    return Math.round(SPEED_DELAY_SLOW + (SPEED_DELAY_FAST - SPEED_DELAY_SLOW) * t);
+    // Tune these two numbers if you want even slower/faster overall:
+    // speed 1: slow, speed 10: fast
+    const tickMs = Math.round(140 - s * 12);      // 128ms .. 20ms
+    const pxPerTick = Math.round(2 + s * 2.6);    // 5px .. 28px
+    return { tickMs, pxPerTick };
   }
 
-  function drawLineNow(cmd) {
-    const a = toCanvasXY(cmd.x1, cmd.y1);
-    const b = toCanvasXY(cmd.x2, cmd.y2);
-    ctx.strokeStyle = cmd.color || "#00ff66";
-    ctx.lineWidth = Number(cmd.width || 2);
+  function drawSegment(x1, y1, x2, y2, color, width) {
+    const a = toCanvasXY(x1, y1);
+    const b = toCanvasXY(x2, y2);
+    ctx.strokeStyle = color || "#00ff66";
+    ctx.lineWidth = Number(width || 2);
     ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(a.cx, a.cy);
@@ -318,14 +322,88 @@
     turtleState.color = s.pencolor || turtleState.color;
   }
 
-  function scheduleQueue() {
-    if (drawTimer) return;
+  // Animate one line command in small chunks.
+  // cmd.x1,y1 -> cmd.x2,y2, and cmd._turtle is "state after the move".
+  function animateLine(cmd, done) {
+    const { tickMs, pxPerTick } = speedParams(cmd.speed);
+
+    // instant
+    if (tickMs === 0 || !Number.isFinite(pxPerTick)) {
+      drawSegment(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
+      applyTurtleState(cmd._turtle || null);
+      redrawTurtle();
+      done();
+      return;
+    }
+
+    const x1 = Number(cmd.x1) || 0, y1 = Number(cmd.y1) || 0;
+    const x2 = Number(cmd.x2) || 0, y2 = Number(cmd.y2) || 0;
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+
+    // If very tiny, just draw instantly
+    if (dist < 0.5) {
+      drawSegment(x1, y1, x2, y2, cmd.color, cmd.width);
+      applyTurtleState(cmd._turtle || null);
+      redrawTurtle();
+      done();
+      return;
+    }
+
+    let travelled = 0;
+    let lastX = x1, lastY = y1;
+
+    // Keep heading/visible/color stable during movement
+    const endState = cmd._turtle || null;
+    const heading = endState ? Number(endState.heading) || turtleState.heading : turtleState.heading;
+    const visible = endState ? !!endState.visible : turtleState.visible;
+    const tColor = endState ? (endState.pencolor || turtleState.color) : turtleState.color;
 
     const step = () => {
+      // how far to go this tick
+      const nextTravel = Math.min(dist, travelled + pxPerTick);
+      const t = nextTravel / dist;
+
+      const curX = x1 + dx * t;
+      const curY = y1 + dy * t;
+
+      drawSegment(lastX, lastY, curX, curY, cmd.color, cmd.width);
+
+      // move turtle along line as it draws
+      turtleState.x = curX;
+      turtleState.y = curY;
+      turtleState.heading = heading;
+      turtleState.visible = visible;
+      turtleState.color = tColor;
+      redrawTurtle();
+
+      travelled = nextTravel;
+      lastX = curX; lastY = curY;
+
+      if (travelled >= dist - 1e-6) {
+        // snap to exact final state (important for correctness)
+        applyTurtleState(endState);
+        redrawTurtle();
+        done();
+        return;
+      }
+
+      drawTimer = setTimeout(step, tickMs);
+    };
+
+    step();
+  }
+
+  function scheduleQueue() {
+    if (animatingLine) return;
+    animatingLine = true;
+
+    const next = () => {
       if (!drawQueue.length) {
+        animatingLine = false;
         drawTimer = null;
 
-        // Apply any deferred final turtle-only state (e.g. last left/right)
+        // Apply any deferred turtle-only state (eg. the final left/right after last line)
         if (deferredFinalTurtleState) {
           applyTurtleState(deferredFinalTurtleState);
           deferredFinalTurtleState = null;
@@ -335,33 +413,25 @@
       }
 
       const cmd = drawQueue.shift();
-      const delay = speedToDelay(cmd.speed);
-
-      drawLineNow(cmd);
-
-      // apply the exact turtle state that belongs to this segment
-      applyTurtleState(cmd._turtle ?? null);
-      redrawTurtle();
-
-      if (delay === 0) {
-        step();
-      } else {
-        drawTimer = setTimeout(() => { drawTimer = null; step(); }, delay);
-      }
+      animateLine(cmd, () => {
+        // after this line finishes, continue
+        next();
+      });
     };
 
-    step();
+    next();
   }
 
   function handleCanvasCmd(cmd) {
     if (!cmd || !cmd.type) return;
 
-    const animating = !!drawTimer || drawQueue.length > 0;
+    const animating = animatingLine || drawQueue.length > 0;
 
     if (cmd.type === "bg") {
       currentBg = cmd.color || "#111111";
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
+      animatingLine = false;
       lastLineWaitingForState = null;
       deferredFinalTurtleState = null;
       canvasClear();
@@ -372,6 +442,7 @@
     if (cmd.type === "clear") {
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
+      animatingLine = false;
       lastLineWaitingForState = null;
       deferredFinalTurtleState = null;
       canvasClear();
@@ -380,7 +451,6 @@
     }
 
     if (cmd.type === "line") {
-      // Queue the line. The *next* turtle-state message belongs to this line.
       cmd._turtle = null;
       drawQueue.push(cmd);
       lastLineWaitingForState = cmd;
@@ -389,21 +459,20 @@
     }
 
     if (cmd.type === "turtle") {
-      // If a line is waiting for its turtle state, attach it to that line
+      // Attach turtle state to the last queued line that hasn't received it yet
       if (lastLineWaitingForState && lastLineWaitingForState._turtle == null) {
         lastLineWaitingForState._turtle = cmd;
         lastLineWaitingForState = null;
         return;
       }
 
-      // Otherwise it's a turtle-only update (turns/penup/show/hide/etc).
-      // If animating, defer it until the queue ends (this fixes the final heading).
+      // Turtle-only update:
+      // If animating, defer until finished (fixes final heading/visibility changes during animation)
       if (animating) {
         deferredFinalTurtleState = cmd;
         return;
       }
 
-      // If not animating, apply immediately.
       applyTurtleState(cmd);
       redrawTurtle();
       return;
@@ -523,7 +592,8 @@
   let running = false;
 
   function makeWorker() {
-    const w = new Worker("./py_worker.js?v=cursor4", { type: "module" });
+    // bump the string if you edit worker later
+    const w = new Worker("./py_worker.js?v=cursor5", { type: "module" });
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
@@ -563,6 +633,7 @@
 
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
+      animatingLine = false;
       lastLineWaitingForState = null;
       deferredFinalTurtleState = null;
 
@@ -656,6 +727,7 @@
 
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
+    animatingLine = false;
     lastLineWaitingForState = null;
     deferredFinalTurtleState = null;
 
