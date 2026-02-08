@@ -220,12 +220,10 @@
     const rect = canvas.getBoundingClientRect();
     return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
   }
-
   function overlayClear() {
     const rect = overlay.getBoundingClientRect();
     octx.clearRect(0, 0, rect.width, rect.height);
   }
-
   function redrawTurtle() {
     overlayClear();
     if (!turtleState.visible) return;
@@ -258,19 +256,16 @@
     c.height = Math.max(1, Math.floor(rect.height * dpr));
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-
   function canvasClear() {
     const rect = canvas.getBoundingClientRect();
     ctx.fillStyle = currentBg;
     ctx.fillRect(0, 0, rect.width, rect.height);
   }
-
   function fitCanvases() {
     fitOneCanvas(canvas, ctx);
     fitOneCanvas(overlay, octx);
     redrawTurtle();
   }
-
   function fitAfterLayout() {
     requestAnimationFrame(() => {
       fitCanvases();
@@ -284,9 +279,12 @@
   const drawQueue = [];
   let drawTimer = null;
 
-  // IMPORTANT FIX: the next turtle state belongs to the last queued line
+  // The next turtle state after a line belongs to that line.
   let lastLineWaitingForState = null;
-  let latestTurtleState = null;
+
+  // NEW: if a turtle-only state arrives during animation (e.g. left/right after last line),
+  // we apply it when the animation finishes.
+  let deferredFinalTurtleState = null;
 
   const SPEED_DELAY_SLOW = 450; // speed(1)
   const SPEED_DELAY_FAST = 12;  // speed(10)
@@ -324,7 +322,18 @@
     if (drawTimer) return;
 
     const step = () => {
-      if (!drawQueue.length) { drawTimer = null; return; }
+      if (!drawQueue.length) {
+        drawTimer = null;
+
+        // Apply any deferred final turtle-only state (e.g. last left/right)
+        if (deferredFinalTurtleState) {
+          applyTurtleState(deferredFinalTurtleState);
+          deferredFinalTurtleState = null;
+          redrawTurtle();
+        }
+        return;
+      }
+
       const cmd = drawQueue.shift();
       const delay = speedToDelay(cmd.speed);
 
@@ -347,12 +356,14 @@
   function handleCanvasCmd(cmd) {
     if (!cmd || !cmd.type) return;
 
+    const animating = !!drawTimer || drawQueue.length > 0;
+
     if (cmd.type === "bg") {
       currentBg = cmd.color || "#111111";
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
       lastLineWaitingForState = null;
-      latestTurtleState = null;
+      deferredFinalTurtleState = null;
       canvasClear();
       redrawTurtle();
       return;
@@ -362,7 +373,7 @@
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
       lastLineWaitingForState = null;
-      latestTurtleState = null;
+      deferredFinalTurtleState = null;
       canvasClear();
       redrawTurtle();
       return;
@@ -378,20 +389,23 @@
     }
 
     if (cmd.type === "turtle") {
-      latestTurtleState = cmd;
-
       // If a line is waiting for its turtle state, attach it to that line
       if (lastLineWaitingForState && lastLineWaitingForState._turtle == null) {
-        lastLineWaitingForState._turtle = latestTurtleState;
+        lastLineWaitingForState._turtle = cmd;
         lastLineWaitingForState = null;
         return;
       }
 
-      // Otherwise (turns/penup/show/hide), update immediately if not animating
-      if (!drawQueue.length && !drawTimer) {
-        applyTurtleState(latestTurtleState);
-        redrawTurtle();
+      // Otherwise it's a turtle-only update (turns/penup/show/hide/etc).
+      // If animating, defer it until the queue ends (this fixes the final heading).
+      if (animating) {
+        deferredFinalTurtleState = cmd;
+        return;
       }
+
+      // If not animating, apply immediately.
+      applyTurtleState(cmd);
+      redrawTurtle();
       return;
     }
   }
@@ -509,8 +523,7 @@
   let running = false;
 
   function makeWorker() {
-    // bump this if you ever change worker again
-    const w = new Worker("./py_worker.js?v=cursor3", { type: "module" });
+    const w = new Worker("./py_worker.js?v=cursor4", { type: "module" });
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
@@ -551,7 +564,7 @@
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
       lastLineWaitingForState = null;
-      latestTurtleState = null;
+      deferredFinalTurtleState = null;
 
       writeln("\nProgram stopped by user.");
       try { worker?.terminate(); } catch {}
@@ -568,7 +581,6 @@
 
   async function loadProgram(file) {
     stopExecution("Stopped");
-    removeCaret();
     clearConsole();
     setStatus("Loading " + file + "…");
 
@@ -589,7 +601,6 @@
     currentFile = file;
     cm.setValue(text);
     filenameEl.textContent = file;
-
     programSel.value = file;
     previousSelectValue = file;
 
@@ -639,139 +650,6 @@
     setSaveButtons();
   });
 
-  /* ---------- Save / Save As ---------- */
-  function suggestedTxtNameFromCurrent() {
-    const base = (currentFile || "program").replace(/\.py$/i, "");
-    return base + ".txt";
-  }
-
-  function fallbackDownloadAsTxt() {
-    const name = suggestedTxtNameFromCurrent();
-    const blob = new Blob([cm.getValue()], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    if (!currentFile || !fileHandles.has(currentFile)) return;
-    if (!isDirtyAgainstOriginal()) return;
-
-    try {
-      setStatus("Saving…");
-      const handle = fileHandles.get(currentFile);
-      const writable = await handle.createWritable();
-      await writable.write(cm.getValue());
-      await writable.close();
-
-      const newText = cm.getValue();
-      uploadedText.set(currentFile, newText);
-      originals.set(currentFile, newText);
-
-      setStatus("Saved");
-      setSaveButtons();
-    } catch (e) {
-      setStatus("Save failed");
-      writeln(String(e));
-    }
-  });
-
-  saveAsBtn.addEventListener("click", async () => {
-    try {
-      if (!hasFS) {
-        fallbackDownloadAsTxt();
-        if (currentFile) originals.set(currentFile, cm.getValue());
-        setStatus("Saved (downloaded)");
-        setSaveButtons();
-        return;
-      }
-
-      const handle = await window.showSaveFilePicker({
-        suggestedName: suggestedTxtNameFromCurrent(),
-        types: [{ description: "Text files", accept: { "text/plain": [".txt"] } }]
-      });
-
-      setStatus("Saving…");
-      const writable = await handle.createWritable();
-      await writable.write(cm.getValue());
-      await writable.close();
-
-      if (currentFile) {
-        fileHandles.set(currentFile, handle);
-        const newText = cm.getValue();
-        uploadedText.set(currentFile, newText);
-        originals.set(currentFile, newText);
-      }
-
-      setStatus("Saved");
-      setSaveButtons();
-    } catch (e) {
-      if (String(e).includes("AbortError")) return;
-      setStatus("Save As failed");
-      writeln(String(e));
-    }
-  });
-
-  /* ---------- Upload ---------- */
-  async function openWithFSAccessPicker() {
-    const [handle] = await window.showOpenFilePicker({
-      multiple: false,
-      types: [{ description: "Python or Text", accept: { "text/plain": [".txt"], "text/x-python": [".py"], "application/octet-stream": [".py"] } }]
-    });
-
-    const file = await handle.getFile();
-    const rawName = file.name || "uploaded.txt";
-    const internalName = rawName.replace(/\.(txt|py)$/i, ".py");
-    const text = await file.text();
-
-    ensureOptionExists(internalName);
-    uploadedText.set(internalName, text);
-    originals.set(internalName, text);
-    fileHandles.set(internalName, handle);
-
-    await loadProgram(internalName);
-    setStatus("Ready (opened)");
-  }
-
-  uploadBtn.addEventListener("click", async () => {
-    if (!confirmDiscardIfDirty("Uploading a file")) return;
-    stopExecution("Stopped");
-
-    try {
-      if (hasFS) {
-        await openWithFSAccessPicker();
-      } else {
-        fileInput.value = "";
-        fileInput.click();
-      }
-    } catch (e) {
-      if (String(e).includes("AbortError")) return;
-      setStatus("Upload failed");
-      writeln(String(e));
-    }
-  });
-
-  fileInput.addEventListener("change", async () => {
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) return;
-
-    stopExecution("Stopped");
-
-    const rawName = file.name || "uploaded.txt";
-    const internalName = rawName.replace(/\.(txt|py)$/i, ".py");
-    const text = await file.text();
-
-    ensureOptionExists(internalName);
-    uploadedText.set(internalName, text);
-    originals.set(internalName, text);
-
-    await loadProgram(internalName);
-    setStatus("Ready (uploaded)");
-    setSaveButtons();
-  });
-
   /* ---------- Run ---------- */
   runBtn.onclick = () => {
     clearConsole();
@@ -779,7 +657,7 @@
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
     lastLineWaitingForState = null;
-    latestTurtleState = null;
+    deferredFinalTurtleState = null;
 
     currentBg = "#111111";
     canvasClear();
