@@ -3,235 +3,676 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Python Turtle (Browser)</title>
+  <title>Python + Turtle Runner (Editor + Turtle + Console)</title>
 
-  <!-- CodeMirror -->
+  <!-- CodeMirror 5 -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css">
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/comment/comment.js"></script>
 
   <style>
-    body { margin:0; height:100vh; display:flex; flex-direction:column; font-family:system-ui,sans-serif; }
-    header { padding:8px 12px; border-bottom:1px solid #ddd; display:flex; gap:10px; align-items:center; }
-    #status { color:#555; }
-    #app { flex:1; display:flex; min-height:0; }
-    #left, #right { flex:1; display:flex; flex-direction:column; min-height:0; }
-    #left { border-right:1px solid #ddd; }
+    body { margin: 0; height: 100vh; display: flex; flex-direction: column; font-family: system-ui, sans-serif; }
+    header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; }
+    #status { color: #666; font-size: 14px; }
+    .spacer { flex: 1; }
+    button { padding: 6px 12px; cursor: pointer; }
+    select { padding: 6px 10px; border: 1px solid #ccc; border-radius: 8px; background: white; font-size: 14px; }
 
-    .pane { padding:6px 10px; font-size:14px; border-bottom:1px solid #eee; }
+    #app { flex: 1; display: flex; min-height: 0; width: 100%; }
+    #left, #right { display: flex; flex-direction: column; min-height: 0; flex: 1 1 0; min-width: 240px; }
+    #left { border-right: 1px solid #ddd; }
 
-    #editorWrap { flex:1; }
-    .CodeMirror { height:100%; font-size:14px; }
+    .pane-title {
+      padding: 6px 12px;
+      font-size: 14px;
+      color: #444;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pane-title .spacer { flex: 1; }
 
-    #stageWrap { flex:1; background:#111; position:relative; }
-    canvas {
-      position:absolute;
-      left:10px; top:10px;
-      width:calc(100% - 20px);
-      height:calc(100% - 20px);
-      border:1px solid #333;
+    #splitter {
+      width: 8px;
+      cursor: col-resize;
+      background: #f3f3f3;
+      border-left: 1px solid #ddd;
+      border-right: 1px solid #ddd;
+      flex: 0 0 8px;
+      user-select: none;
+      touch-action: none;
     }
 
-    #consoleWrap { height:200px; background:#0b0b0b; }
+    #editorWrap { flex: 1; min-height: 0; }
+    .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
+    .CodeMirror-gutters { border-right: 1px solid #eee; }
+
+    #stageWrap { flex: 1; min-height: 0; background: #111; position: relative; }
+    #stage, #overlay {
+      position: absolute;
+      left: 12px; top: 12px;
+      width: calc(100% - 24px);
+      height: calc(100% - 24px);
+      border: 1px solid #333;
+      display: block;
+      box-sizing: border-box;
+    }
+    #stage { background: #111; z-index: 1; }
+    #overlay { z-index: 5; pointer-events: none; }
+
+    #consoleWrap { height: 240px; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
     #console {
-      height:100%;
-      padding:10px;
-      color:#eaeaea;
-      font-family:monospace;
-      overflow:auto;
-      white-space:pre-wrap;
+      height: 100%;
+      padding: 12px;
+      overflow: auto;
+      color: #eaeaea;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      outline: none;
+      cursor: text;
+      background: #0b0b0b;
+      box-sizing: border-box;
     }
   </style>
 </head>
 
 <body>
 <header>
-  <button id="run">Run ▶</button>
+  <label style="font-size:14px;color:#444;">Program:</label>
+  <select id="program" disabled></select>
+
+  <button id="run" disabled>Run ▶</button>
   <button id="stop" disabled>Stop ■</button>
-  <span id="status">Ready</span>
+  <button id="reload" disabled>Reload ↻</button>
+
+  <div class="spacer"></div>
+  <div id="status">Loading…</div>
 </header>
 
 <div id="app">
   <section id="left">
-    <div class="pane">Editor</div>
+    <div class="pane-title" id="filename">Editor</div>
     <div id="editorWrap"><textarea id="editor"></textarea></div>
   </section>
 
+  <div id="splitter" title="Drag to resize"></div>
+
   <section id="right">
-    <div class="pane">Turtle</div>
+    <div class="pane-title">Turtle</div>
     <div id="stageWrap">
       <canvas id="stage"></canvas>
       <canvas id="overlay"></canvas>
     </div>
-    <div class="pane">Console</div>
-    <div id="consoleWrap"><div id="console"></div></div>
+
+    <div class="pane-title">
+      <span>Console</span>
+      <div class="spacer"></div>
+      <button id="clear">Clear console</button>
+    </div>
+    <div id="consoleWrap">
+      <div id="console" tabindex="0"></div>
+    </div>
   </section>
 </div>
 
 <script type="module">
-/* ================== Editor ================== */
-const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
-  mode: "python",
-  lineNumbers: true,
-  indentUnit: 4
-});
-editor.setValue(
-`import turtle
+  const runBtn = document.getElementById("run");
+  const stopBtn = document.getElementById("stop");
+  const reloadBtn = document.getElementById("reload");
+  const statusEl = document.getElementById("status");
+  const programSel = document.getElementById("program");
+  const filenameEl = document.getElementById("filename");
+  const consoleEl = document.getElementById("console");
+  const clearBtn = document.getElementById("clear");
 
-turtle.speed(3)
-for _ in range(4):
-    turtle.forward(40)
-    turtle.left(90)`
-);
+  const leftPane = document.getElementById("left");
+  const rightPane = document.getElementById("right");
+  const splitter = document.getElementById("splitter");
+  const app = document.getElementById("app");
 
-/* ================== Canvas ================== */
-const canvas = document.getElementById("stage");
-const ctx = canvas.getContext("2d");
-const overlay = document.getElementById("overlay");
-const octx = overlay.getContext("2d");
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const overlay = document.getElementById("overlay");
+  const octx = overlay.getContext("2d");
 
-function resizeCanvas() {
-  for (const c of [canvas, overlay]) {
-    const r = c.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    c.width = r.width * dpr;
-    c.height = r.height * dpr;
-    c.getContext("2d").setTransform(dpr,0,0,dpr,0,0);
-  }
-  redrawTurtle();
-}
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
+  const setStatus = (s) => statusEl.textContent = s;
 
-function toXY(x,y){
-  const r = canvas.getBoundingClientRect();
-  return { cx:r.width/2+x, cy:r.height/2-y };
-}
-
-/* ================== Turtle ================== */
-const turtle = { x:0, y:0, heading:0, visible:true, color:"#00ff66" };
-
-function redrawTurtle(){
-  octx.clearRect(0,0,overlay.width,overlay.height);
-  if(!turtle.visible) return;
-
-  const p = toXY(turtle.x, turtle.y);
-  const a = turtle.heading * Math.PI / 180;
-  const s = 10;
-
-  octx.beginPath();
-  octx.moveTo(p.cx + Math.cos(a)*s, p.cy - Math.sin(a)*s);
-  octx.lineTo(p.cx + Math.cos(a+2.5)*s, p.cy - Math.sin(a+2.5)*s);
-  octx.lineTo(p.cx + Math.cos(a-2.5)*s, p.cy - Math.sin(a-2.5)*s);
-  octx.closePath();
-  octx.fillStyle = turtle.color;
-  octx.fill();
-}
-
-/* ================== Animation ================== */
-const queue = [];
-let animating = false;
-
-function speedParams(s){
-  if (s <= 0) return { instant:true };
-  return { px: Math.max(1, s), delay: 30 };
-}
-
-function drawSeg(x1,y1,x2,y2,color,width){
-  const a = toXY(x1,y1), b = toXY(x2,y2);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.beginPath();
-  ctx.moveTo(a.cx,a.cy);
-  ctx.lineTo(b.cx,b.cy);
-  ctx.stroke();
-}
-
-function animateLine(cmd, done){
-  const sp = speedParams(cmd.speed);
-  if (sp.instant) {
-    drawSeg(cmd.x1,cmd.y1,cmd.x2,cmd.y2,cmd.color,cmd.width);
-    Object.assign(turtle, cmd.end);
-    redrawTurtle();
-    done();
-    return;
-  }
-
-  const dx = cmd.x2 - cmd.x1;
-  const dy = cmd.y2 - cmd.y1;
-  const dist = Math.hypot(dx,dy);
-  const step = sp.px / dist;
-  let t = 0;
-  let lx = cmd.x1, ly = cmd.y1;
-
-  function tick(){
-    t = Math.min(1, t + step);
-    const x = cmd.x1 + dx * t;
-    const y = cmd.y1 + dy * t;
-
-    drawSeg(lx,ly,x,y,cmd.color,cmd.width);
-    turtle.x = x;
-    turtle.y = y;
-    turtle.heading = cmd.end.heading;
-    redrawTurtle();
-
-    lx = x; ly = y;
-    if (t < 1) setTimeout(tick, sp.delay);
-    else { Object.assign(turtle, cmd.end); redrawTurtle(); done(); }
-  }
-  tick();
-}
-
-function runQueue(){
-  if (animating || !queue.length) return;
-  animating = true;
-  const cmd = queue.shift();
-  animateLine(cmd, () => {
-    animating = false;
-    runQueue();
+  /* ---------- Editor ---------- */
+  const cm = CodeMirror.fromTextArea(document.getElementById("editor"), {
+    mode: "python",
+    lineNumbers: true,
+    indentUnit: 4,
+    tabSize: 4,
+    smartIndent: true,
+    matchBrackets: true,
+    extraKeys: {
+      "Tab": cm => cm.replaceSelection("    ", "end"),
+      "Shift-Tab": cm => cm.indentSelection("subtract")
+    }
   });
-}
+  cm.setSize(null, "100%");
 
-/* ================== Worker ================== */
-const consoleEl = document.getElementById("console");
-const statusEl = document.getElementById("status");
-const worker = new Worker("./py_worker.js", { type:"module" });
-
-worker.onmessage = e => {
-  const m = e.data;
-  if (m.type === "stdout") {
-    consoleEl.textContent += m.text + "\n";
+  /* ---------- Splitter ---------- */
+  let dragging = false;
+  function setLeftWidth(px) {
+    const total = app.getBoundingClientRect().width;
+    const minLeft = 240;
+    const minRight = 280;
+    const maxLeft = total - 8 - minRight;
+    const clamped = Math.max(minLeft, Math.min(px, maxLeft));
+    leftPane.style.flex = `0 0 ${clamped}px`;
+    rightPane.style.flex = `1 1 0`;
+    cm.refresh();
+    fitAfterLayout();
   }
-  if (m.type === "canvas_cmd") {
-    if (m.cmd.type === "line") {
-      queue.push({
-        ...m.cmd,
-        end: {
-          x: m.cmd.x2,
-          y: m.cmd.y2,
-          heading: turtle.heading,
-          visible: turtle.visible,
-          color: turtle.color
-        }
-      });
-      runQueue();
-    }
-    if (m.cmd.type === "turtle") {
-      Object.assign(turtle, m.cmd);
+  splitter.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    splitter.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  });
+  splitter.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const rect = app.getBoundingClientRect();
+    setLeftWidth(e.clientX - rect.left);
+  });
+  splitter.addEventListener("pointerup", (e) => {
+    dragging = false;
+    try { splitter.releasePointerCapture(e.pointerId); } catch {}
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
+
+  /* ---------- Turtle state (displayed) ---------- */
+  const turtleState = { x: 0, y: 0, heading: 0, visible: true, color: "#00ff66" };
+  let logicalState = { x: 0, y: 0, heading: 0, visible: true, pencolor: "#00ff66" };
+
+  function toCanvasXY(x, y) {
+    const rect = canvas.getBoundingClientRect();
+    return { cx: rect.width / 2 + x, cy: rect.height / 2 - y };
+  }
+
+  function overlayClear() {
+    const rect = overlay.getBoundingClientRect();
+    octx.clearRect(0, 0, rect.width, rect.height);
+  }
+
+  function redrawTurtle() {
+    overlayClear();
+    if (!turtleState.visible) return;
+
+    const p = toCanvasXY(turtleState.x, turtleState.y);
+    const size = 12;
+    const ang = (turtleState.heading * Math.PI) / 180;
+
+    const tip = { x: Math.cos(ang) * size, y: -Math.sin(ang) * size };
+    const left = { x: Math.cos(ang + 2.5) * (size * 0.75), y: -Math.sin(ang + 2.5) * (size * 0.75) };
+    const right = { x: Math.cos(ang - 2.5) * (size * 0.75), y: -Math.sin(ang - 2.5) * (size * 0.75) };
+
+    octx.beginPath();
+    octx.moveTo(p.cx + tip.x, p.cy + tip.y);
+    octx.lineTo(p.cx + left.x, p.cy + left.y);
+    octx.lineTo(p.cx + right.x, p.cy + right.y);
+    octx.closePath();
+
+    octx.fillStyle = turtleState.color || "#00ff66";
+    octx.globalAlpha = 0.9;
+    octx.fill();
+    octx.globalAlpha = 1;
+  }
+
+  /* ---------- Canvas sizing ---------- */
+  let currentBg = "#111111";
+
+  function fitOneCanvas(c, context) {
+    const rect = c.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    c.width = Math.max(1, Math.floor(rect.width * dpr));
+    c.height = Math.max(1, Math.floor(rect.height * dpr));
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function canvasClear() {
+    const rect = canvas.getBoundingClientRect();
+    ctx.fillStyle = currentBg;
+    ctx.fillRect(0, 0, rect.width, rect.height);
+  }
+
+  function fitCanvases() {
+    fitOneCanvas(canvas, ctx);
+    fitOneCanvas(overlay, octx);
+    redrawTurtle();
+  }
+
+  function fitAfterLayout() {
+    requestAnimationFrame(() => {
+      fitCanvases();
+      requestAnimationFrame(() => fitCanvases());
+    });
+  }
+
+  window.addEventListener("resize", () => { cm.refresh(); fitAfterLayout(); });
+  fitAfterLayout();
+
+  /* ---------- Ordered animation queue ---------- */
+
+  const q = [];
+  let animating = false;
+  let timer = null;
+
+  let lastLineWaitingForState = null;
+  let lastKnownSpeed = 10;
+
+  // ✅ NEW: guarantee at least this many ticks for any non-zero-distance motion
+  const MIN_TICKS_PER_SEGMENT = 8;
+
+  function speedParams(speed) {
+    let s = Number(speed);
+    if (!Number.isFinite(s)) s = 10;
+    if (s <= 0) return { instant: true, tickMs: 0, pxPerTick: Infinity };
+    if (s > 10) s = 10;
+
+    const tickMs = Math.round(140 - s * 12);      // 128ms .. 20ms
+    const pxPerTick = Math.round(2 + s * 2.6);    // 5px .. 28px
+    return { instant: false, tickMs, pxPerTick };
+  }
+
+  // ✅ NEW: cap pxPerTick based on distance so short lines still animate
+  function effectivePxPerTick(dist, pxPerTick) {
+    // ensure at least MIN_TICKS_PER_SEGMENT steps for this distance
+    const maxPxThisSegment = Math.max(1, dist / MIN_TICKS_PER_SEGMENT);
+    return Math.min(pxPerTick, maxPxThisSegment);
+  }
+
+  function drawSegment(x1, y1, x2, y2, color, width) {
+    const a = toCanvasXY(x1, y1);
+    const b = toCanvasXY(x2, y2);
+    ctx.strokeStyle = color || "#00ff66";
+    ctx.lineWidth = Number(width || 2);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(a.cx, a.cy);
+    ctx.lineTo(b.cx, b.cy);
+    ctx.stroke();
+  }
+
+  function applyStateToTurtle(s) {
+    if (!s) return;
+    turtleState.x = Number(s.x) || 0;
+    turtleState.y = Number(s.y) || 0;
+    turtleState.heading = Number(s.heading) || 0;
+    turtleState.visible = !!s.visible;
+    turtleState.color = s.pencolor || turtleState.color;
+  }
+
+  function animateMove(from, to, speed, done) {
+    const { instant, tickMs, pxPerTick } = speedParams(speed);
+    const x1 = Number(from.x) || 0, y1 = Number(from.y) || 0;
+    const x2 = Number(to.x) || 0, y2 = Number(to.y) || 0;
+
+    const heading = Number(to.heading) || turtleState.heading;
+    const visible = !!to.visible;
+    const tColor = to.pencolor || turtleState.color;
+
+    if (instant) {
+      turtleState.x = x2; turtleState.y = y2;
+      turtleState.heading = heading;
+      turtleState.visible = visible;
+      turtleState.color = tColor;
       redrawTurtle();
+      done();
+      return;
+    }
+
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < 0.5) {
+      turtleState.x = x2; turtleState.y = y2;
+      turtleState.heading = heading;
+      turtleState.visible = visible;
+      turtleState.color = tColor;
+      redrawTurtle();
+      done();
+      return;
+    }
+
+    const stepPx = effectivePxPerTick(dist, pxPerTick);
+    let travelled = 0;
+
+    const step = () => {
+      const nextTravel = Math.min(dist, travelled + stepPx);
+      const t = nextTravel / dist;
+
+      turtleState.x = x1 + dx * t;
+      turtleState.y = y1 + dy * t;
+      turtleState.heading = heading;
+      turtleState.visible = visible;
+      turtleState.color = tColor;
+      redrawTurtle();
+
+      travelled = nextTravel;
+
+      if (travelled >= dist - 1e-6) {
+        turtleState.x = x2; turtleState.y = y2;
+        redrawTurtle();
+        done();
+        return;
+      }
+
+      timer = setTimeout(step, tickMs);
+    };
+    step();
+  }
+
+  function animateLine(cmd, done) {
+    const { instant, tickMs, pxPerTick } = speedParams(cmd.speed);
+    const endState = cmd.endState;
+
+    const heading = Number(endState.heading) || turtleState.heading;
+    const visible = !!endState.visible;
+    const tColor = endState.pencolor || turtleState.color;
+
+    if (instant) {
+      drawSegment(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
+      applyStateToTurtle(endState);
+      redrawTurtle();
+      done();
+      return;
+    }
+
+    const x1 = Number(cmd.x1) || 0, y1 = Number(cmd.y1) || 0;
+    const x2 = Number(cmd.x2) || 0, y2 = Number(cmd.y2) || 0;
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < 0.5) {
+      drawSegment(x1, y1, x2, y2, cmd.color, cmd.width);
+      applyStateToTurtle(endState);
+      redrawTurtle();
+      done();
+      return;
+    }
+
+    const stepPx = effectivePxPerTick(dist, pxPerTick);
+    let travelled = 0;
+    let lastX = x1, lastY = y1;
+
+    const step = () => {
+      const nextTravel = Math.min(dist, travelled + stepPx);
+      const t = nextTravel / dist;
+
+      const curX = x1 + dx * t;
+      const curY = y1 + dy * t;
+
+      drawSegment(lastX, lastY, curX, curY, cmd.color, cmd.width);
+
+      turtleState.x = curX;
+      turtleState.y = curY;
+      turtleState.heading = heading;
+      turtleState.visible = visible;
+      turtleState.color = tColor;
+      redrawTurtle();
+
+      travelled = nextTravel;
+      lastX = curX; lastY = curY;
+
+      if (travelled >= dist - 1e-6) {
+        applyStateToTurtle(endState);
+        redrawTurtle();
+        done();
+        return;
+      }
+
+      timer = setTimeout(step, tickMs);
+    };
+    step();
+  }
+
+  function runQueue() {
+    if (animating) return;
+    animating = true;
+
+    const next = () => {
+      if (!q.length) {
+        animating = false;
+        timer = null;
+        return;
+      }
+
+      const item = q.shift();
+
+      if (item.kind === "state") {
+        applyStateToTurtle(item.state);
+        redrawTurtle();
+        next();
+        return;
+      }
+
+      if (item.kind === "move") {
+        animateMove(item.from, item.to, item.speed, next);
+        return;
+      }
+
+      if (item.kind === "line") {
+        if (!item.endState) {
+          q.unshift(item);
+          animating = false;
+          return;
+        }
+        animateLine(item, next);
+        return;
+      }
+    };
+
+    next();
+  }
+
+  function resetQueues() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    q.length = 0;
+    animating = false;
+    lastLineWaitingForState = null;
+  }
+
+  function handleCanvasCmd(cmd) {
+    if (!cmd || !cmd.type) return;
+
+    if (cmd.type === "bg") {
+      currentBg = cmd.color || "#111111";
+      resetQueues();
+      canvasClear();
+      redrawTurtle();
+      return;
+    }
+
+    if (cmd.type === "clear") {
+      resetQueues();
+      canvasClear();
+      redrawTurtle();
+      return;
+    }
+
+    if (cmd.type === "line") {
+      lastKnownSpeed = cmd.speed ?? lastKnownSpeed;
+
+      const lineItem = {
+        kind: "line",
+        x1: cmd.x1, y1: cmd.y1,
+        x2: cmd.x2, y2: cmd.y2,
+        color: cmd.color,
+        width: cmd.width,
+        speed: cmd.speed,
+        endState: null
+      };
+
+      q.push(lineItem);
+      lastLineWaitingForState = lineItem;
+      runQueue();
+      return;
+    }
+
+    if (cmd.type === "turtle") {
+      const nextState = {
+        x: Number(cmd.x) || 0,
+        y: Number(cmd.y) || 0,
+        heading: Number(cmd.heading) || 0,
+        visible: !!cmd.visible,
+        pencolor: cmd.pencolor || logicalState.pencolor
+      };
+
+      if (lastLineWaitingForState && !lastLineWaitingForState.endState) {
+        lastLineWaitingForState.endState = nextState;
+        lastLineWaitingForState = null;
+        logicalState = nextState;
+        runQueue();
+        return;
+      }
+
+      const moved = (nextState.x !== logicalState.x) || (nextState.y !== logicalState.y);
+      const headingChanged = nextState.heading !== logicalState.heading;
+      const visChanged = nextState.visible !== logicalState.visible;
+      const colorChanged = nextState.pencolor !== logicalState.pencolor;
+
+      if (moved) {
+        q.push({ kind: "move", from: logicalState, to: nextState, speed: lastKnownSpeed });
+      } else if (headingChanged || visChanged || colorChanged) {
+        q.push({ kind: "state", state: nextState });
+      }
+
+      logicalState = nextState;
+      runQueue();
+      return;
     }
   }
-};
 
-document.getElementById("run").onclick = () => {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  queue.length = 0;
-  turtle.x = turtle.y = turtle.heading = 0;
-  turtle.visible = true;
-  redrawTurtle();
-  consoleEl.textContent = "";
-  worker.postMessage({ type:"run", code: editor.getValue() });
-};
+  /* ---------- Console ---------- */
+  function writeln(s="") { consoleEl.textContent += s + "\n"; consoleEl.scrollTop = consoleEl.scrollHeight; }
+  function clearConsole() { consoleEl.textContent = ""; }
+  clearBtn.onclick = () => { clearConsole(); consoleEl.focus(); };
+
+  /* ---------- Programs (simple) ---------- */
+  let currentFile = null;
+  let previousSelectValue = null;
+
+  async function loadProgramList() {
+    const res = await fetch("./programs.json", { cache: "no-store" });
+    const files = await res.json();
+    programSel.innerHTML = "";
+    for (const f of files) programSel.add(new Option(f, f));
+    return files[0];
+  }
+
+  async function loadProgram(file) {
+    setStatus("Loading " + file + "…");
+    const res = await fetch("./" + file, { cache: "no-store" });
+    const text = await res.text();
+    currentFile = file;
+    cm.setValue(text);
+    filenameEl.textContent = file;
+    programSel.value = file;
+    previousSelectValue = file;
+    setStatus("Ready");
+  }
+
+  programSel.addEventListener("change", async () => {
+    const nextFile = programSel.value;
+    programSel.value = nextFile;
+    await loadProgram(nextFile);
+  });
+
+  reloadBtn.addEventListener("click", async () => {
+    await loadProgram(programSel.value);
+  });
+
+  /* ---------- Worker ---------- */
+  let worker = null;
+  let running = false;
+
+  function makeWorker() {
+    const w = new Worker("./py_worker.js?v=cursor8", { type: "module" });
+
+    w.onmessage = (ev) => {
+      const m = ev.data || {};
+      if (m.type === "stdout") writeln(m.text ?? "");
+      if (m.type === "stderr") writeln(m.text ?? "");
+      if (m.type === "status") setStatus(m.text ?? "");
+      if (m.type === "canvas_cmd") handleCanvasCmd(m.cmd);
+
+      if (m.type === "ready") {
+        setStatus("Ready");
+        runBtn.disabled = false;
+        stopBtn.disabled = true;
+      }
+      if (m.type === "done") {
+        running = false;
+        runBtn.disabled = false;
+        stopBtn.disabled = true;
+        setStatus("Done");
+      }
+      if (m.type === "error") {
+        running = false;
+        runBtn.disabled = false;
+        stopBtn.disabled = true;
+        setStatus("Error");
+        writeln(String(m.text ?? ""));
+      }
+    };
+
+    w.postMessage({ type: "init" });
+    return w;
+  }
+
+  function stopExecution(reason = "Stopped") {
+    if (!running) return;
+    resetQueues();
+    writeln("Program stopped by user.");
+    try { worker?.terminate(); } catch {}
+    worker = makeWorker();
+    running = false;
+    runBtn.disabled = false;
+    stopBtn.disabled = true;
+    setStatus(reason);
+  }
+
+  stopBtn.addEventListener("click", () => stopExecution("Stopped"));
+  worker = makeWorker();
+
+  runBtn.onclick = () => {
+    clearConsole();
+    resetQueues();
+
+    currentBg = "#111111";
+    canvasClear();
+
+    logicalState = { x: 0, y: 0, heading: 0, visible: true, pencolor: "#00ff66" };
+    turtleState.x = 0; turtleState.y = 0; turtleState.heading = 0;
+    turtleState.visible = true; turtleState.color = "#00ff66";
+    redrawTurtle();
+
+    running = true;
+    runBtn.disabled = true;
+    stopBtn.disabled = false;
+    setStatus("Running…");
+    worker.postMessage({ type: "run", code: cm.getValue() });
+  };
+
+  /* ---------- Init ---------- */
+  (async () => {
+    setStatus("Loading…");
+    const first = await loadProgramList();
+    await loadProgram(first);
+    programSel.disabled = false;
+    runBtn.disabled = false;
+    reloadBtn.disabled = false;
+    stopBtn.disabled = true;
+    setStatus("Ready");
+  })();
 </script>
 </body>
 </html>
