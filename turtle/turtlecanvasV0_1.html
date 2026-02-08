@@ -95,6 +95,34 @@
       background: #0b0b0b;
       box-sizing: border-box;
     }
+
+#consoleInputRow {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid #222;
+  background: #0b0b0b;
+}
+#consolePrompt {
+  color: #bbb;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  white-space: pre;
+}
+#consoleInput {
+  flex: 1;
+  min-width: 80px;
+  background: #0b0b0b;
+  color: #eee;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  outline: none;
+}
+#consoleInput:focus { border-color: #555; }
   </style>
 </head>
 
@@ -141,6 +169,7 @@
     </div>
     <div id="consoleWrap">
       <div id="console" tabindex="0"></div>
+        <div id="consoleInputRow" aria-hidden="true"><span id="consolePrompt"></span><input id="consoleInput" type="text" autocomplete="off" /></div>
     </div>
     </div>
 
@@ -743,36 +772,68 @@ const leftPane = document.getElementById("left");
 
   function resetSync() {
     pendingOut.length = 0;
-    pendingInputs.length = 0;
     appliedSeq = 0;
+    pendingInputs.length = 0;
+    hideConsoleInput();
   }
+
 
   /* ---------- Input sync (seq) ---------- */
-  const pendingInputs = []; // {seq:number, prompt:string}
+  const pendingInputs = []; // {prompt, seq}
+  let waitingForInput = false;
 
-  async function flushInputs() {
-    // Only ask for input once the animation has applied everything up to that seq.
+  const consoleInputRow = document.getElementById("consoleInputRow");
+  const consolePromptEl = document.getElementById("consolePrompt");
+  const consoleInputEl = document.getElementById("consoleInput");
+
+  function hideConsoleInput() {
+    waitingForInput = false;
+    consoleInputRow.style.display = "none";
+    consoleInputRow.setAttribute("aria-hidden", "true");
+    consolePromptEl.textContent = "";
+    consoleInputEl.value = "";
+  }
+
+  function showConsoleInput(promptText) {
+    waitingForInput = true;
+    consolePromptEl.textContent = String(promptText ?? "");
+    consoleInputRow.style.display = "flex";
+    consoleInputRow.setAttribute("aria-hidden", "false");
+    // Scroll to bottom and focus
+    requestAnimationFrame(() => {
+      consoleInputEl.focus();
+      const wrap = document.getElementById("consoleWrap");
+      wrap.scrollTop = wrap.scrollHeight;
+    });
+  }
+
+  function flushInputs() {
+    if (waitingForInput) return;
+    if (!pendingInputs.length) return;
     pendingInputs.sort((a,b) => (a.seq ?? 0) - (b.seq ?? 0));
-    while (pendingInputs.length) {
-      const n = pendingInputs[0];
-      const s = Number(n.seq);
-      if (!Number.isFinite(s) || s <= appliedSeq) {
-        pendingInputs.shift();
-
-        // Use a simple modal prompt (smallest, safest implementation)
-        const p = String(n.prompt ?? "");
-        // Show prompt in console for context (Trinket-like)
-        if (p) writeln(p);
-
-        const ans = window.prompt(p || "");
-        worker?.postMessage({ type: "input_response", text: ans ?? "" });
-
-        // If multiple inputs were queued (rare), loop continues.
-      } else {
-        break;
-      }
+    const next = pendingInputs[0];
+    const s = Number(next.seq);
+    if (!Number.isFinite(s) || s <= appliedSeq) {
+      pendingInputs.shift();
+      showConsoleInput(next.prompt);
     }
   }
+
+  consoleInputEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (!waitingForInput) return;
+
+    const value = consoleInputEl.value ?? "";
+    // Echo prompt + entered text into the console output (like real stdin)
+    const p = consolePromptEl.textContent ?? "";
+    writeln(String(p) + String(value));
+
+    hideConsoleInput();
+    try { worker?.postMessage({ type: "input_response", text: String(value) }); } catch {}
+    flushInputs();
+  });
+
   clearBtn.onclick = () => { clearConsole(); consoleEl.focus(); };
 
   /* ---------- Programs (simple) ---------- */
@@ -832,17 +893,15 @@ const leftPane = document.getElementById("left");
         if (Number.isFinite(s)) { pendingOut.push({ kind: "stderr", seq: s, text: m.text ?? "" }); flushOut(); }
         else writeln(m.text ?? "");
       }
-
-      if (m.type === "input_request") {
-        // Queue the prompt so it appears in-order with the animated drawing.
-        const s = Number(m.seq);
-        pendingInputs.push({ seq: Number.isFinite(s) ? s : appliedSeq, prompt: m.prompt ?? "" });
-        flushInputs();
-      }
       if (m.type === "status") setStatus(m.text ?? "");
       if (m.type === "canvas_cmd") {
         if (!acceptCanvas) return;
         handleCanvasCmd(m.cmd);
+      }
+
+      if (m.type === "input_request") {
+        pendingInputs.push({ prompt: m.prompt ?? "", seq: m.seq });
+        flushInputs();
       }
 
       if (m.type === "ready") {
