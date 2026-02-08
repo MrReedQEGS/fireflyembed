@@ -644,12 +644,13 @@
       if (item.kind === "state") {
         applyStateToTurtle(item.state);
         redrawTurtle();
+        ack(item.id);
         next();
         return;
       }
 
       if (item.kind === "move") {
-        animateMove(item.from, item.to, item.speed, next);
+        animateMove(item.from, item.to, item.speed, () => { ack(item.id); next(); });
         return;
       }
 
@@ -659,7 +660,11 @@
           animating = false;
           return;
         }
-        animateLine(item, next);
+        animateLine(item, () => {
+          ack(item.lineId);
+          if (item.turtleId != null) ack(item.turtleId);
+          next();
+        });
         return;
       }
     };
@@ -675,7 +680,7 @@
     lastLineWaitingForState = null;
   }
 
-  function handleCanvasCmd(cmd) {
+  function handleCanvasCmd(cmd, cmdId) {
     if (!cmd || !cmd.type) return;
 
     // Manual refresh controls: tracer(0) + update()
@@ -688,6 +693,7 @@
         resetQueues();
         syncBackBufferFromFront();
       }
+      ack(cmdId);
       return;
     }
 
@@ -700,6 +706,7 @@
         }
         redrawTurtle();
       }
+      ack(cmdId);
       return;
     }
 
@@ -711,11 +718,13 @@
 
       if (tracerN === 0) {
         fillBgOn(bctx);
+        ack(cmdId);
         return;
       }
 
       canvasClear();
       redrawTurtle();
+      ack(cmdId);
       return;
     }
 
@@ -726,11 +735,13 @@
 
       if (tracerN === 0) {
         fillBgOn(bctx);
+        ack(cmdId);
         return;
       }
 
       canvasClear();
       redrawTurtle();
+      ack(cmdId);
       return;
     }
 
@@ -741,11 +752,14 @@
       if (tracerN === 0) {
         drawSegmentTo(bctx, cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
         strokes.push({ x1: Number(cmd.x1)||0, y1: Number(cmd.y1)||0, x2: Number(cmd.x2)||0, y2: Number(cmd.y2)||0, color: cmd.color, width: cmd.width });
+        ack(cmdId);
         return;
       }
 
       const lineItem = {
         kind: "line",
+        lineId: cmdId,
+        turtleId: null,
         x1: cmd.x1, y1: cmd.y1,
         x2: cmd.x2, y2: cmd.y2,
         color: cmd.color,
@@ -772,11 +786,13 @@
       if (tracerN === 0) {
         logicalState = nextState;
         bufferedTurtleState = nextState;
+        ack(cmdId);
         return;
       }
 
       if (lastLineWaitingForState && !lastLineWaitingForState.endState) {
         lastLineWaitingForState.endState = nextState;
+        lastLineWaitingForState.turtleId = cmdId;
         lastLineWaitingForState = null;
         logicalState = nextState;
         runQueue();
@@ -789,9 +805,15 @@
       const colorChanged = nextState.pencolor !== logicalState.pencolor;
 
       if (moved) {
-        q.push({ kind: "move", from: logicalState, to: nextState, speed: lastKnownSpeed });
+        q.push({ kind: "move", id: cmdId, from: logicalState, to: nextState, speed: lastKnownSpeed });
       } else if (headingChanged || visChanged || colorChanged) {
-        q.push({ kind: "state", state: nextState });
+        q.push({ kind: "state", id: cmdId, state: nextState });
+      }
+
+      // If nothing was enqueued, this state is already effectively applied
+      if (!moved && !(headingChanged || visChanged || colorChanged)) {
+        ack(cmdId);
+        return;
       }
 
       logicalState = nextState;
@@ -945,7 +967,13 @@
   let acceptCanvas = true;
   let cancelToken = 0;
 
-  function makeWorker() {
+  
+  function ack(id) {
+    if (!worker) return;
+    if (id == null) return;
+    worker.postMessage({ type: "ack", id });
+  }
+function makeWorker() {
     const w = new Worker("./py_worker.js?v=tracer2", { type: "module" });
 
     w.onmessage = (ev) => {
@@ -955,7 +983,7 @@
       if (m.type === "status") setStatus(m.text ?? "");
       if (m.type === "canvas_cmd") {
         if (!acceptCanvas) return;
-        handleCanvasCmd(m.cmd);
+        handleCanvasCmd(m.cmd, m.id);
       }
 
       if (m.type === "input_request") {
