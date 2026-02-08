@@ -74,7 +74,6 @@ def update():
     global _pending_cmds
     if not _pending_cmds:
         return
-    # Flush buffered commands in a single message so the UI can apply them in one fast pass.
     __canvas_cmd_batch__(_pending_cmds, True)
     _pending_cmds = []
 
