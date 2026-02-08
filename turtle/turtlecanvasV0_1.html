@@ -83,7 +83,7 @@
 
 <body>
 <header>
-  <label style="font-size:14px;color:#444;">debug 1 - Program:</label>
+  <label style="font-size:14px;color:#444;">v7 - Program:</label>
   <select id="program" disabled></select>
 
   <button id="run" disabled>Run ▶</button>
@@ -345,7 +345,10 @@
     const stepPx = effectivePxPerTick(dist, pxPerTick);
     let travelled = 0;
 
+    const myToken = cancelToken;
+
     const step = () => {
+      if (myToken !== cancelToken) return;
       const nextTravel = Math.min(dist, travelled + stepPx);
       const t = nextTravel / dist;
 
@@ -403,7 +406,10 @@
     let travelled = 0;
     let lastX = x1, lastY = y1;
 
+    const myToken = cancelToken;
+
     const step = () => {
+      if (myToken !== cancelToken) return;
       const nextTravel = Math.min(dist, travelled + stepPx);
       const t = nextTravel / dist;
 
@@ -474,6 +480,7 @@
   }
 
   function resetQueues() {
+    cancelToken++;
     if (timer) { clearTimeout(timer); timer = null; }
     q.length = 0;
     animating = false;
@@ -593,8 +600,11 @@
   /* ---------- Worker ---------- */
   let worker = null;
   let running = false;
-  let pyReady = false;
 
+
+  // Stop control flags
+  let acceptCanvas = true; // keep Stop responsive; gate drawing when stopped
+  let cancelToken = 0; // increments to cancel in-flight animations
   function makeWorker() {
     const w = new Worker("./py_worker.js?v=cursor8", { type: "module" });
 
@@ -603,16 +613,15 @@
       if (m.type === "stdout") writeln(m.text ?? "");
       if (m.type === "stderr") writeln(m.text ?? "");
       if (m.type === "status") setStatus(m.text ?? "");
-      if (m.type === "canvas_cmd") handleCanvasCmd(m.cmd);
+      if (m.type === "canvas_cmd") {
+        if (!acceptCanvas) return;
+        handleCanvasCmd(m.cmd);
+      }
 
       if (m.type === "ready") {
-        pyReady = true;
-        // Only update buttons if we are not currently running a program.
         setStatus("Ready");
-        if (!running) {
-          runBtn.disabled = false;
-          stopBtn.disabled = false;
-        }
+        runBtn.disabled = false;
+        stopBtn.disabled = false;
       }
       if (m.type === "done") {
         running = false;
@@ -633,12 +642,17 @@
     return w;
   }
 
-  function stopExecution() {
-    // Debug: prove the Stop button is clickable.
-    writeln("stop button pressed");
-    setStatus("Stop pressed");
+  function stopExecution(reason = "Stopped") {
+    if (!running) return;
+    resetQueues();
+    writeln("Program stopped by user.");
+    try { worker?.terminate(); } catch {}
+    worker = makeWorker();
+    running = false;
+    runBtn.disabled = false;
+    stopBtn.disabled = false;
+    setStatus(reason);
   }
-
 
   stopBtn.addEventListener("click", () => stopExecution("Stopped"));
   worker = makeWorker();
@@ -656,6 +670,7 @@
     redrawTurtle();
 
     running = true;
+    acceptCanvas = true;
     runBtn.disabled = true;
     stopBtn.disabled = false;
     setStatus("Running…");
@@ -668,11 +683,10 @@
     const first = await loadProgramList();
     await loadProgram(first);
     programSel.disabled = false;
-    // Keep Run disabled until the Python worker reports it is ready.
-    runBtn.disabled = !pyReady;
+    runBtn.disabled = false;
     reloadBtn.disabled = false;
     stopBtn.disabled = false;
-    if (!pyReady) setStatus("Loading Python…");
+    setStatus("Ready");
   })();
 </script>
 </body>
