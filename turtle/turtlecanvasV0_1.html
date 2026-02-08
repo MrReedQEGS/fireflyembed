@@ -138,7 +138,7 @@
   <div id="splitter" title="Drag to resize"></div>
 
   <section id="right">
-    <div class="pane-title" id="turtleTitle">  <span>Turtle</span>  <span style="margin-left:auto; display:flex; align-items:center; gap:6px;">    <button id="zoomOut" title="Zoom out" style="padding:2px 8px;">–</button>    <span id="zoomLabel" style="min-width:52px; text-align:center;">100%</span>    <button id="zoomIn" title="Zoom in" style="padding:2px 8px;">+</button>    <button id="zoomReset" title="Reset zoom" style="padding:2px 8px;">Reset</button>  </span></div>
+    <div class="pane-title" id="turtleTitle">Turtle</div>
     <div id="stageWrap">
       <canvas id="stage"></canvas>
       <canvas id="overlay"></canvas>
@@ -1092,55 +1092,5 @@
     setStatus("Ready");
   })();
 </script>
-
-<script>
-// === Canvas visual zoom (UI-only) ===
-(() => {
-  let zoom = 1.0;
-  const ZOOM_MIN = 0.3;
-  const ZOOM_MAX = 3.0;
-  const ZOOM_STEP = 0.1;
-
-  const stage = document.getElementById("stage");
-  const overlay = document.getElementById("overlay");
-  const zoomInBtn = document.getElementById("zoomIn");
-  const zoomOutBtn = document.getElementById("zoomOut");
-  const zoomResetBtn = document.getElementById("zoomReset");
-  const zoomLabel = document.getElementById("zoomLabel");
-
-  function applyZoom() {
-    // Apply to both canvases so overlay stays aligned
-    const targets = [stage, overlay].filter(Boolean);
-    for (const el of targets) {
-      el.style.transformOrigin = "center center";
-      el.style.transform = `scale(${zoom})`;
-    }
-    if (zoomLabel) zoomLabel.textContent = Math.round(zoom * 100) + "%";
-  }
-
-  if (!stage || !overlay || !zoomInBtn || !zoomOutBtn || !zoomResetBtn || !zoomLabel) {
-    // If anything is missing, fail silently (avoid breaking the app)
-    return;
-  }
-
-  zoomInBtn.addEventListener("click", () => {
-    zoom = Math.min(ZOOM_MAX, +(zoom + ZOOM_STEP).toFixed(2));
-    applyZoom();
-  });
-
-  zoomOutBtn.addEventListener("click", () => {
-    zoom = Math.max(ZOOM_MIN, +(zoom - ZOOM_STEP).toFixed(2));
-    applyZoom();
-  });
-
-  zoomResetBtn.addEventListener("click", () => {
-    zoom = 1.0;
-    applyZoom();
-  });
-
-  applyZoom();
-})();
-</script>
-
 </body>
 </html>
