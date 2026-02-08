@@ -209,7 +209,13 @@
     smartIndent: true,
     matchBrackets: true,
     extraKeys: {
-      "Tab": cm => cm.replaceSelection("    ", "end"),
+      "Tab": cm => {
+        if (cm.somethingSelected()) {
+          cm.indentSelection("add");
+        } else {
+          cm.replaceSelection("    ", "end");
+        }
+      },
       "Shift-Tab": cm => cm.indentSelection("subtract")
     }
   });
