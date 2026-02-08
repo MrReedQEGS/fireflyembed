@@ -605,9 +605,10 @@
       if (m.type === "canvas_cmd") handleCanvasCmd(m.cmd);
 
       if (m.type === "ready") {
-        setStatus("Ready");
-        // Prevent "ready" from re-disabling Stop during an active run
+        // If the user already started a run before the worker finished loading,
+        // do NOT clobber the running UI state (this was greying out Stop).
         if (!running) {
+          setStatus("Ready");
           runBtn.disabled = false;
           stopBtn.disabled = true;
         }
@@ -671,10 +672,10 @@
     const first = await loadProgramList();
     await loadProgram(first);
     programSel.disabled = false;
+    // Keep Run disabled until the Python worker signals it is ready.
     runBtn.disabled = true;
     reloadBtn.disabled = false;
     stopBtn.disabled = true;
-    // Wait for the worker "ready" message before enabling Run
     setStatus("Loading Python…");
   })();
 </script>
