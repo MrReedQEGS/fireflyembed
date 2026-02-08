@@ -296,57 +296,19 @@ const leftPane = document.getElementById("left");
     if (s <= 0) return { instant: true, tickMs: 0, pxPerTick: Infinity };
     if (s > 10) s = 10;
 
-    // Calibrated to match your request:
-    // - speed 1 stays slow (same as before)
-    // - speed 5 ~= previous speed 10 (your "current 10")
-    // - speed 10 is near-instant (Trinket-like)
-    //
-    // We do a 2-stage curve:
-    //   1..2  : keep slow + smooth start
-    //   2..5  : ramp quickly to "very fast" (old max)
-    //   5..10 : ramp to near-instant
-
-    // Stage A: 1 -> 128ms, 2 -> 20ms (unchanged baseline feel)
-    let tickMs, pxPerTick;
+    // Trinket-like curve:
+    // - speed 1 stays slow (matches previous behavior)
+    // - speed 2 ~= old speed 10
+    // - smooth exponential ramp to "super fast" at speed 10
+    let tickMs;
     if (s <= 2) {
-      tickMs = 128 + (20 - 128) * (s - 1);  // 1..2
-      pxPerTick = 5 + (28 - 5) * (s - 1);   // 1..2
-      return {
-        instant: false,
-        tickMs: Math.max(1, Math.round(tickMs)),
-        pxPerTick: Math.max(1, Math.round(pxPerTick)),
-      };
+      // 1 -> 128ms, 2 -> 20ms
+      tickMs = 128 + (20 - 128) * (s - 1);
+    } else {
+      // 2 -> 20ms, 10 -> 1ms
+      const t = (s - 2) / 8;              // 0..1
+      tickMs = 20 * Math.pow(1 / 20, t);  // 20..1
     }
-
-    // Stage B: 2..5 -> reach "old max" by speed 5
-    // t=0 at 2, t=1 at 5
-    const t = (s - 2) / 3; // 0..(8/3)
-    const t1 = Math.min(1, t);
-
-    // By speed 5: tickMs ~= 1, pxPerTick ~= 200
-    tickMs = 20 * Math.pow(1 / 20, t1);          // 20..1
-    pxPerTick = 28 * Math.pow(200 / 28, t1);     // 28..200
-
-    // Stage C: 5..10 -> push to near-instant
-    if (s > 5) {
-      const u = (s - 5) / 5; // 0..1
-      // Reduce delay further (allow 0ms near the top)
-      tickMs = tickMs * Math.pow(0.05, u);       // 1..~0
-      // Increase pixels per tick a lot so segments finish in very few steps
-      pxPerTick = pxPerTick * Math.pow(3000 / 200, u); // 200..3000
-
-      // At the very top, treat as instant draw.
-      if (s >= 9.75) {
-        return { instant: true, tickMs: 0, pxPerTick: Infinity };
-      }
-    }
-
-    return {
-      instant: false,
-      tickMs: Math.max(0, Math.round(tickMs)),
-      pxPerTick: Math.max(1, Math.round(pxPerTick)),
-    };
-  }
 
     let pxPerTick;
     if (s <= 2) {
