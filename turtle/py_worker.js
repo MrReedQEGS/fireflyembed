@@ -63,6 +63,16 @@ async function ensurePyodide() {
 
     TRACER_N = 1
 
+    MAX_TURTLE_COMMANDS = 30000
+    _turtle_cmd_count = 0
+
+    def _tick(n=1):
+        global _turtle_cmd_count
+        _turtle_cmd_count += int(n)
+        if _turtle_cmd_count > MAX_TURTLE_COMMANDS:
+            raise RuntimeError(f"Stopped: turtle command limit exceeded ({MAX_TURTLE_COMMANDS})")
+
+
     def tracer(n=None, delay=None):
         global TRACER_N
         if n is None:
@@ -132,6 +142,7 @@ async function ensurePyodide() {
             _emit_state(self)
 
         def forward(self, d):
+            _tick()
             r = math.radians(self.heading)
             nx = self.x + math.cos(r) * float(d)
             ny = self.y + math.sin(r) * float(d)
@@ -141,14 +152,17 @@ async function ensurePyodide() {
             self.forward(-float(d))
 
         def left(self, deg):
+            _tick()
             self.heading = (self.heading + float(deg)) % 360.0
             _emit_state(self)
 
         def right(self, deg):
+            _tick()
             self.heading = (self.heading - float(deg)) % 360.0
             _emit_state(self)
 
         def goto(self, x, y=None):
+            _tick()
             if y is None:
                 x, y = x
             self._line_to(float(x), float(y))
@@ -201,19 +215,23 @@ async function ensurePyodide() {
         def st(self): self.showturtle()
 
         def clear(self):
+            _tick()
             _cmd(type="clear")
             _emit_state(self)
 
         def bgcolor(self, c):
+            _tick()
             _cmd(type="bg", color=str(c))
             _emit_state(self)
 
         def home(self):
+            _tick()
             self.goto(0, 0)
             self.heading = 0.0
             _emit_state(self)
 
         def setheading(self, deg):
+            _tick()
             self.heading = float(deg) % 360.0
             _emit_state(self)
 
@@ -221,6 +239,8 @@ async function ensurePyodide() {
     _T = _WebTurtle()
 
     def reset():
+        global _turtle_cmd_count
+        _turtle_cmd_count = 0
         _cmd(type="clear")
         _cmd(type="bg", color="#111111")
         global _T
