@@ -593,6 +593,7 @@
   /* ---------- Worker ---------- */
   let worker = null;
   let running = false;
+  let pyReady = false;
 
   function makeWorker() {
     const w = new Worker("./py_worker.js?v=cursor8", { type: "module" });
@@ -605,10 +606,10 @@
       if (m.type === "canvas_cmd") handleCanvasCmd(m.cmd);
 
       if (m.type === "ready") {
-        // If the user already started a run before the worker finished loading,
-        // do NOT clobber the running UI state (this was greying out Stop).
+        pyReady = true;
+        // Only update buttons if we are not currently running a program.
+        setStatus("Ready");
         if (!running) {
-          setStatus("Ready");
           runBtn.disabled = false;
           stopBtn.disabled = true;
         }
@@ -672,11 +673,11 @@
     const first = await loadProgramList();
     await loadProgram(first);
     programSel.disabled = false;
-    // Keep Run disabled until the Python worker signals it is ready.
-    runBtn.disabled = true;
+    // Keep Run disabled until the Python worker reports it is ready.
+    runBtn.disabled = !pyReady;
     reloadBtn.disabled = false;
     stopBtn.disabled = true;
-    setStatus("Loading Python…");
+    if (!pyReady) setStatus("Loading Python…");
   })();
 </script>
 </body>
