@@ -659,7 +659,7 @@
           animating = false;
           return;
         }
-        animateLine(item, () => { ack(item.id); next(); });
+        animateLine(item, next);
         return;
       }
     };
@@ -675,7 +675,7 @@
     lastLineWaitingForState = null;
   }
 
-  function handleCanvasCmd(cmd, cmdId) {
+  function handleCanvasCmd(cmd) {
     if (!cmd || !cmd.type) return;
 
     // Manual refresh controls: tracer(0) + update()
@@ -688,8 +688,6 @@
         resetQueues();
         syncBackBufferFromFront();
       }
-      ack(cmdId);
-      return;
       return;
     }
 
@@ -743,10 +741,10 @@
       if (tracerN === 0) {
         drawSegmentTo(bctx, cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
         strokes.push({ x1: Number(cmd.x1)||0, y1: Number(cmd.y1)||0, x2: Number(cmd.x2)||0, y2: Number(cmd.y2)||0, color: cmd.color, width: cmd.width });
-        ack(cmdId);
         return;
       }
-const lineItem = {
+
+      const lineItem = {
         kind: "line",
         x1: cmd.x1, y1: cmd.y1,
         x2: cmd.x2, y2: cmd.y2,
@@ -947,14 +945,7 @@ const lineItem = {
   let acceptCanvas = true;
   let cancelToken = 0;
 
-  
-  function ack(id) {
-    if (!worker) return;
-    if (id == null) return;
-    worker.postMessage({ type: "ack", id });
-  }
-
-function makeWorker() {
+  function makeWorker() {
     const w = new Worker("./py_worker.js?v=tracer2", { type: "module" });
 
     w.onmessage = (ev) => {
@@ -964,7 +955,7 @@ function makeWorker() {
       if (m.type === "status") setStatus(m.text ?? "");
       if (m.type === "canvas_cmd") {
         if (!acceptCanvas) return;
-        handleCanvasCmd(m.cmd, m.id);
+        handleCanvasCmd(m.cmd);
       }
 
       if (m.type === "input_request") {
@@ -1002,10 +993,6 @@ function makeWorker() {
     resetQueues();
     cancelInputUI();
 
-    // Reset tracer mode so it can't leak between runs
-    tracerN = 1;
-    bufferedTurtleState = null;
-
     writeln("Program stopped by user.");
     try { worker?.terminate(); } catch {}
     worker = makeWorker();
@@ -1021,11 +1008,6 @@ function makeWorker() {
   runBtn.onclick = () => {
     clearConsole();
     resetQueues();
-
-    // Reset tracer mode at the start of every run (prevents tracer(0) from leaking)
-    tracerN = 1;
-    bufferedTurtleState = null;
-
     strokes.length = 0;
 
     currentBg = "#111111";
