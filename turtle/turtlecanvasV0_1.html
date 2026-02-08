@@ -644,13 +644,12 @@
       if (item.kind === "state") {
         applyStateToTurtle(item.state);
         redrawTurtle();
-        ack(item.id);
         next();
         return;
       }
 
       if (item.kind === "move") {
-        animateMove(item.from, item.to, item.speed, () => { ack(item.id); next(); });
+        animateMove(item.from, item.to, item.speed, next);
         return;
       }
 
@@ -660,11 +659,7 @@
           animating = false;
           return;
         }
-        animateLine(item, () => {
-          ack(item.lineId);
-          if (item.turtleId != null) ack(item.turtleId);
-          next();
-        });
+        animateLine(item, () => { ack(item.id); next(); });
         return;
       }
     };
@@ -695,6 +690,7 @@
       }
       ack(cmdId);
       return;
+      return;
     }
 
     if (cmd.type === "update") {
@@ -706,7 +702,6 @@
         }
         redrawTurtle();
       }
-      ack(cmdId);
       return;
     }
 
@@ -718,13 +713,11 @@
 
       if (tracerN === 0) {
         fillBgOn(bctx);
-        ack(cmdId);
         return;
       }
 
       canvasClear();
       redrawTurtle();
-      ack(cmdId);
       return;
     }
 
@@ -735,13 +728,11 @@
 
       if (tracerN === 0) {
         fillBgOn(bctx);
-        ack(cmdId);
         return;
       }
 
       canvasClear();
       redrawTurtle();
-      ack(cmdId);
       return;
     }
 
@@ -755,11 +746,8 @@
         ack(cmdId);
         return;
       }
-
-      const lineItem = {
+const lineItem = {
         kind: "line",
-        lineId: cmdId,
-        turtleId: null,
         x1: cmd.x1, y1: cmd.y1,
         x2: cmd.x2, y2: cmd.y2,
         color: cmd.color,
@@ -786,13 +774,11 @@
       if (tracerN === 0) {
         logicalState = nextState;
         bufferedTurtleState = nextState;
-        ack(cmdId);
         return;
       }
 
       if (lastLineWaitingForState && !lastLineWaitingForState.endState) {
         lastLineWaitingForState.endState = nextState;
-        lastLineWaitingForState.turtleId = cmdId;
         lastLineWaitingForState = null;
         logicalState = nextState;
         runQueue();
@@ -805,15 +791,9 @@
       const colorChanged = nextState.pencolor !== logicalState.pencolor;
 
       if (moved) {
-        q.push({ kind: "move", id: cmdId, from: logicalState, to: nextState, speed: lastKnownSpeed });
+        q.push({ kind: "move", from: logicalState, to: nextState, speed: lastKnownSpeed });
       } else if (headingChanged || visChanged || colorChanged) {
-        q.push({ kind: "state", id: cmdId, state: nextState });
-      }
-
-      // If nothing was enqueued, this state is already effectively applied
-      if (!moved && !(headingChanged || visChanged || colorChanged)) {
-        ack(cmdId);
-        return;
+        q.push({ kind: "state", state: nextState });
       }
 
       logicalState = nextState;
@@ -973,6 +953,7 @@
     if (id == null) return;
     worker.postMessage({ type: "ack", id });
   }
+
 function makeWorker() {
     const w = new Worker("./py_worker.js?v=tracer2", { type: "module" });
 
