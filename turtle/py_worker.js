@@ -71,14 +71,17 @@ def tracer(n=1, delay=None):
         update()
 
 def update():
-    """Flush any buffered draw/state cmds (used with tracer(0))."""
     global _pending_cmds
     if not _pending_cmds:
         return
-    cmds = _pending_cmds
+    # Flush buffered commands in chunks to reduce UI 'chunking' and make update() look instant.
+    CHUNK = 400
+    i = 0
+    n = len(_pending_cmds)
+    while i < n:
+        __canvas_cmd_batch__(_pending_cmds[i:i+CHUNK])
+        i += CHUNK
     _pending_cmds = []
-    for c in cmds:
-        __canvas_cmd__(c)
 
 def _cmd(**kwargs):
     global _pending_cmds
