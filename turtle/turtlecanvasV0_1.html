@@ -35,7 +35,6 @@
     }
     .pane-title .spacer { flex: 1; }
 
-    /* Splitter */
     #splitter {
       width: 8px;
       cursor: col-resize;
@@ -46,36 +45,24 @@
       user-select: none;
       touch-action: none;
     }
-    #splitter:hover { background: #e9e9e9; }
 
-    /* Editor */
     #editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
     .CodeMirror-gutters { border-right: 1px solid #eee; }
 
-    /* Turtle stage */
-    #stageWrap {
-      flex: 1;
-      min-height: 0;
-      background: #111;
-      position: relative;
-    }
-
+    #stageWrap { flex: 1; min-height: 0; background: #111; position: relative; }
     #stage, #overlay {
       position: absolute;
-      left: 12px;
-      top: 12px;
+      left: 12px; top: 12px;
       width: calc(100% - 24px);
       height: calc(100% - 24px);
       border: 1px solid #333;
       display: block;
       box-sizing: border-box;
     }
-
     #stage { background: #111; z-index: 1; }
     #overlay { z-index: 5; pointer-events: none; }
 
-    /* Console */
     #consoleWrap { height: 240px; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
     #console {
       height: 100%;
@@ -195,7 +182,7 @@
   });
   cm.setSize(null, "100%");
 
-  /* ---------- Splitter (drag resize) ---------- */
+  /* ---------- Splitter ---------- */
   let dragging = false;
   function setLeftWidth(px) {
     const total = app.getBoundingClientRect().width;
@@ -206,7 +193,7 @@
     leftPane.style.flex = `0 0 ${clamped}px`;
     rightPane.style.flex = `1 1 0`;
     cm.refresh();
-    fitCanvases();
+    fitAfterLayout();
   }
   splitter.addEventListener("pointerdown", (e) => {
     dragging = true;
@@ -226,12 +213,8 @@
     document.body.style.userSelect = "";
   });
 
-  /* ---------- Turtle cursor state + drawing ---------- */
-  const turtleState = {
-    x: 0, y: 0, heading: 0,
-    visible: true,
-    color: "#00ff66"
-  };
+  /* ---------- Turtle cursor state ---------- */
+  const turtleState = { x: 0, y: 0, heading: 0, visible: true, color: "#00ff66" };
 
   function toCanvasXY(x, y) {
     const rect = canvas.getBoundingClientRect();
@@ -285,24 +268,24 @@
   function fitCanvases() {
     fitOneCanvas(canvas, ctx);
     fitOneCanvas(overlay, octx);
-    // don't auto-clear drawings here; only clear on explicit commands
     redrawTurtle();
   }
 
-  // IMPORTANT: iframe/layout-safe sizing (run after layout)
   function fitAfterLayout() {
     requestAnimationFrame(() => {
       fitCanvases();
       requestAnimationFrame(() => fitCanvases());
     });
   }
-
   window.addEventListener("resize", () => { cm.refresh(); fitAfterLayout(); });
   fitAfterLayout();
 
   /* ---------- Turtle animation queue (speed) ---------- */
   const drawQueue = [];
   let drawTimer = null;
+
+  // NEW: state buffering so turtle moves with drawn lines
+  let pendingTurtleState = null; // latest turtle state since last line
 
   const SPEED_DELAY_SLOW = 450; // speed(1)
   const SPEED_DELAY_FAST = 12;  // speed(10)
@@ -327,6 +310,15 @@
     ctx.stroke();
   }
 
+  function applyTurtleState(s) {
+    if (!s) return;
+    turtleState.x = Number(s.x) || 0;
+    turtleState.y = Number(s.y) || 0;
+    turtleState.heading = Number(s.heading) || 0;
+    turtleState.visible = !!s.visible;
+    turtleState.color = s.pencolor || turtleState.color;
+  }
+
   function scheduleQueue() {
     if (drawTimer) return;
 
@@ -336,6 +328,9 @@
       const delay = speedToDelay(cmd.speed);
 
       drawLineNow(cmd);
+
+      // Apply the turtle state that belongs to THIS drawn segment
+      applyTurtleState(cmd._turtle);
       redrawTurtle();
 
       if (delay === 0) {
@@ -355,6 +350,7 @@
       currentBg = cmd.color || "#111111";
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
+      pendingTurtleState = null;
       canvasClear();
       redrawTurtle();
       return;
@@ -363,24 +359,32 @@
     if (cmd.type === "clear") {
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
+      pendingTurtleState = null;
       canvasClear();
       redrawTurtle();
       return;
     }
 
-    if (cmd.type === "line") {
-      drawQueue.push(cmd);
-      scheduleQueue();
+    if (cmd.type === "turtle") {
+      // Save latest state; it will be applied when the next line is drawn
+      pendingTurtleState = cmd;
+
+      // If no line animation is happening (turns/penup), update immediately
+      if (!drawQueue.length && !drawTimer) {
+        applyTurtleState(pendingTurtleState);
+        pendingTurtleState = null;
+        redrawTurtle();
+      }
       return;
     }
 
-    if (cmd.type === "turtle") {
-      turtleState.x = Number(cmd.x) || 0;
-      turtleState.y = Number(cmd.y) || 0;
-      turtleState.heading = Number(cmd.heading) || 0;
-      turtleState.visible = !!cmd.visible;
-      turtleState.color = cmd.pencolor || turtleState.color;
-      redrawTurtle();
+    if (cmd.type === "line") {
+      // Attach the most recent turtle state to this line so it animates correctly
+      cmd._turtle = pendingTurtleState;
+      pendingTurtleState = null;
+
+      drawQueue.push(cmd);
+      scheduleQueue();
       return;
     }
   }
@@ -499,8 +503,8 @@
   let running = false;
 
   function makeWorker() {
-    // cache-bust worker in case ChromeOS keeps old one
-    const w = new Worker("./py_worker.js?v=cursor1", { type: "module" });
+    // cache-bust to avoid Chromebook caching worker too aggressively
+    const w = new Worker("./py_worker.js?v=cursor2", { type: "module" });
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
@@ -540,6 +544,7 @@
 
       if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
       drawQueue.length = 0;
+      pendingTurtleState = null;
 
       writeln("\nProgram stopped by user.");
       try { worker?.terminate(); } catch {}
@@ -766,15 +771,15 @@
 
     if (drawTimer) { clearTimeout(drawTimer); drawTimer = null; }
     drawQueue.length = 0;
+    pendingTurtleState = null;
 
-    // reset visuals
+    // Reset visuals immediately
     currentBg = "#111111";
     canvasClear();
-    turtleState.visible = true;
     turtleState.x = 0; turtleState.y = 0; turtleState.heading = 0;
+    turtleState.visible = true;
     redrawTurtle();
 
-    if (!worker) worker = makeWorker();
     running = true;
     runBtn.disabled = true;
     stopBtn.disabled = false;
