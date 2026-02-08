@@ -947,6 +947,10 @@
   /* ---------- Worker ---------- */
   let worker = null;
   let running = false;
+  const INACTIVITY_LIMIT_MS = 3000; // soft stop if no output/drawing for this long
+  const INACTIVITY_POLL_MS = 200;
+  let lastActivityTs = 0;
+
   let runTimeoutId = null;
 
   let acceptCanvas = true;
@@ -957,6 +961,7 @@
 
     w.onmessage = (ev) => {
       const m = ev.data || {};
+      if (running) lastActivityTs = Date.now();
       if (m.type === "stdout") writeln(m.text ?? "");
       if (m.type === "stderr") writeln(m.text ?? "");
       if (m.type === "status") setStatus(m.text ?? "");
@@ -1006,6 +1011,8 @@
     tracerN = 1;
     bufferedTurtleState = null;
 
+    if (runTimeoutId) { clearTimeout(runTimeoutId); runTimeoutId = null; }
+
     if (userInitiated) {
       writeln("Program stopped by user.");
     } else {
@@ -1046,9 +1053,13 @@
     stopBtn.disabled = false;
     setStatus("Running…");
     if (runTimeoutId) { clearTimeout(runTimeoutId); runTimeoutId = null; }
-    runTimeoutId = setTimeout(() => {
-      if (running) stopExecution("Stopped: time limit exceeded (3s)", false);
-    }, 3000);
+    lastActivityTs = Date.now();
+    runTimeoutId = setInterval(() => {
+      if (!running) return;
+      if (Date.now() - lastActivityTs > INACTIVITY_LIMIT_MS) {
+        stopExecution("Stopped: time limit exceeded (3s)", false);
+      }
+    }, INACTIVITY_POLL_MS);
     worker.postMessage({ type: "run", code: cm.getValue() });
   };
 
