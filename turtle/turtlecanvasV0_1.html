@@ -46,7 +46,24 @@
       touch-action: none;
     }
 
-    #editorWrap { flex: 1; min-height: 0; }
+    
+#hsplitter {
+      height: 8px;
+      cursor: row-resize;
+      background: #f3f3f3;
+      border-top: 1px solid #ddd;
+      border-bottom: 1px solid #ddd;
+      flex: 0 0 8px;
+      user-select: none;
+      touch-action: none;
+    }
+
+    #consolePane {
+      display: flex;
+      flex-direction: column;
+      min-height: 160px;
+    }
+#editorWrap { flex: 1; min-height: 0; }
     .CodeMirror { height: 100% !important; font-size: 14px; line-height: 1.4; }
     .CodeMirror-gutters { border-right: 1px solid #eee; }
 
@@ -63,7 +80,7 @@
     #stage { background: #111; z-index: 1; }
     #overlay { z-index: 5; pointer-events: none; }
 
-    #consoleWrap { height: 240px; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
+    #consoleWrap { flex: 1; background: #0b0b0b; border-top: 1px solid #222; min-height: 160px; }
     #console {
       height: 100%;
       padding: 12px;
@@ -108,12 +125,15 @@
   <div id="splitter" title="Drag to resize"></div>
 
   <section id="right">
-    <div class="pane-title">Turtle</div>
+    <div class="pane-title" id="turtleTitle">Turtle</div>
     <div id="stageWrap">
       <canvas id="stage"></canvas>
       <canvas id="overlay"></canvas>
     </div>
 
+    <div id="hsplitter" title="Drag to resize"></div>
+
+    <div id="consolePane">
     <div class="pane-title">
       <span>Console</span>
       <div class="spacer"></div>
@@ -122,6 +142,8 @@
     <div id="consoleWrap">
       <div id="console" tabindex="0"></div>
     </div>
+    </div>
+
   </section>
 </div>
 
@@ -153,6 +175,11 @@ const leftPane = document.getElementById("left");
   const rightPane = document.getElementById("right");
   const splitter = document.getElementById("splitter");
   const app = document.getElementById("app");
+
+  const hsplitter = document.getElementById("hsplitter");
+  const stageWrap = document.getElementById("stageWrap");
+  const consolePane = document.getElementById("consolePane");
+  const turtleTitle = document.getElementById("turtleTitle");
 
   const canvas = document.getElementById("stage");
   const ctx = canvas.getContext("2d");
@@ -207,6 +234,53 @@ const leftPane = document.getElementById("left");
     document.body.style.userSelect = "";
   });
 
+
+  /* ---------- Horizontal splitter (Turtle vs Console) ---------- */
+  let hDragging = false;
+
+  function setStageHeight(px) {
+    const rect = rightPane.getBoundingClientRect();
+    const titleH = turtleTitle.getBoundingClientRect().height;
+    const splitterH = hsplitter.getBoundingClientRect().height;
+
+    const minStage = 180;
+    const minConsole = 180;
+
+    const totalBelowTitle = rect.height - titleH - splitterH;
+    const maxStage = Math.max(minStage, totalBelowTitle - minConsole);
+
+    const clamped = Math.max(minStage, Math.min(px, maxStage));
+
+    // Fix stage height; let console take remaining space
+    stageWrap.style.flex = `0 0 ${clamped}px`;
+    consolePane.style.flex = "1 1 0";
+
+    fitAfterLayout();
+  }
+
+  hsplitter.addEventListener("pointerdown", (e) => {
+    hDragging = true;
+    hsplitter.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  });
+
+  hsplitter.addEventListener("pointermove", (e) => {
+    if (!hDragging) return;
+    const rect = rightPane.getBoundingClientRect();
+    const titleH = turtleTitle.getBoundingClientRect().height;
+    const y = e.clientY - rect.top;
+    const desiredStage = y - titleH;
+    setStageHeight(desiredStage);
+  });
+
+  hsplitter.addEventListener("pointerup", (e) => {
+    hDragging = false;
+    try { hsplitter.releasePointerCapture(e.pointerId); } catch {}
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  });
+
   /* ---------- Turtle state (displayed) ---------- */
   const turtleState = { x: 0, y: 0, heading: 0, visible: true, color: "#00ff66" };
   let logicalState = { x: 0, y: 0, heading: 0, visible: true, pencolor: "#00ff66" };
@@ -247,6 +321,7 @@ const leftPane = document.getElementById("left");
 
   /* ---------- Canvas sizing ---------- */
   let currentBg = "#111111";
+  const strokes = []; // store completed turtle line strokes so resizing can redraw
 
   function fitOneCanvas(c, context) {
     const rect = c.getBoundingClientRect();
@@ -262,10 +337,26 @@ const leftPane = document.getElementById("left");
     ctx.fillRect(0, 0, rect.width, rect.height);
   }
 
+
+  function redrawAll() {
+    // Clear background
+    const rect = canvas.getBoundingClientRect();
+    ctx.fillStyle = currentBg;
+    ctx.fillRect(0, 0, rect.width, rect.height);
+
+    // Redraw stored strokes (in logical coordinates)
+    for (const s of strokes) {
+      drawSegment(s.x1, s.y1, s.x2, s.y2, s.color, s.width);
+    }
+
+    // Turtle is on the overlay canvas
+    redrawTurtle();
+  }
+
   function fitCanvases() {
     fitOneCanvas(canvas, ctx);
     fitOneCanvas(overlay, octx);
-    redrawTurtle();
+    redrawAll();
   }
 
   function fitAfterLayout() {
@@ -428,6 +519,7 @@ const leftPane = document.getElementById("left");
 
     if (instant) {
       drawSegment(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
+      strokes.push({ x1: Number(cmd.x1)||0, y1: Number(cmd.y1)||0, x2: Number(cmd.x2)||0, y2: Number(cmd.y2)||0, color: cmd.color, width: cmd.width });
       applyStateToTurtle(endState);
       redrawTurtle();
       done();
@@ -441,6 +533,7 @@ const leftPane = document.getElementById("left");
 
     if (dist < 0.5) {
       drawSegment(x1, y1, x2, y2, cmd.color, cmd.width);
+      strokes.push({ x1, y1, x2, y2, color: cmd.color, width: cmd.width });
       applyStateToTurtle(endState);
       redrawTurtle();
       done();
@@ -474,6 +567,7 @@ const leftPane = document.getElementById("left");
       lastX = curX; lastY = curY;
 
       if (travelled >= dist - 1e-6) {
+        strokes.push({ x1, y1, x2, y2, color: cmd.color, width: cmd.width });
         applyStateToTurtle(endState);
         redrawTurtle();
         done();
@@ -537,6 +631,7 @@ const leftPane = document.getElementById("left");
 
     if (cmd.type === "bg") {
       currentBg = cmd.color || "#111111";
+      strokes.length = 0;
       resetQueues();
       canvasClear();
       redrawTurtle();
@@ -544,6 +639,7 @@ const leftPane = document.getElementById("left");
     }
 
     if (cmd.type === "clear") {
+      strokes.length = 0;
       resetQueues();
       canvasClear();
       redrawTurtle();
@@ -706,6 +802,7 @@ const leftPane = document.getElementById("left");
   runBtn.onclick = () => {
     clearConsole();
     resetQueues();
+    strokes.length = 0;
 
     currentBg = "#111111";
     canvasClear();
