@@ -195,11 +195,6 @@
 
   const canvas = document.getElementById("stage");
   const ctx = canvas.getContext("2d");
-
-  // ✅ Offscreen buffer used only for tracer(0)/update() flush
-  const flushCanvas = document.createElement("canvas");
-  const flushCtx = flushCanvas.getContext("2d");
-
   const overlay = document.getElementById("overlay");
   const octx = overlay.getContext("2d");
 
@@ -367,7 +362,6 @@
   function fitCanvases() {
     fitOneCanvas(canvas, ctx);
     fitOneCanvas(overlay, octx);
-    fitOneCanvas(flushCanvas, flushCtx);
     redrawAll();
   }
 
@@ -441,18 +435,6 @@
     ctx.moveTo(a.cx, a.cy);
     ctx.lineTo(b.cx, b.cy);
     ctx.stroke();
-  }
-
-  function drawSegmentTo(targetCtx, x1, y1, x2, y2, color, width) {
-    const a = toCanvasXY(x1, y1);
-    const b = toCanvasXY(x2, y2);
-    targetCtx.strokeStyle = color || "#00ff66";
-    targetCtx.lineWidth = Number(width || 2);
-    targetCtx.lineCap = "round";
-    targetCtx.beginPath();
-    targetCtx.moveTo(a.cx, a.cy);
-    targetCtx.lineTo(b.cx, b.cy);
-    targetCtx.stroke();
   }
 
   function applyStateToTurtle(s) {
@@ -646,98 +628,23 @@
     lastLineWaitingForState = null;
   }
 
-  
-  // ✅ Fast-path apply (used for tracer(0)/update() flush): bypass animation queue so drawing snaps in instantly.
-  function applyCmdFast(cmd) {
+  function handleCanvasCmd(cmd) {
     if (!cmd || !cmd.type) return;
 
     if (cmd.type === "bg") {
       currentBg = cmd.color || "#111111";
       strokes.length = 0;
-      // background will be painted on flush canvas
+      resetQueues();
+      canvasClear();
+      redrawTurtle();
       return;
     }
 
     if (cmd.type === "clear") {
       strokes.length = 0;
-      // background will be repainted on flush canvas
-      return;
-    }
-
-    if (cmd.type === "line") {
-      // draw immediately, record stroke, then apply endState if provided later via turtle cmd
-      drawSegment(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.color, cmd.width);
-      strokes.push({
-        x1: Number(cmd.x1) || 0, y1: Number(cmd.y1) || 0,
-        x2: Number(cmd.x2) || 0, y2: Number(cmd.y2) || 0,
-        color: cmd.color, width: cmd.width
-      });
-      return;
-    }
-
-    if (cmd.type === "turtle") {
-      const nextState = {
-        x: Number(cmd.x) || 0,
-        y: Number(cmd.y) || 0,
-        heading: Number(cmd.heading) || 0,
-        visible: !!cmd.visible,
-        pencolor: cmd.pencolor || logicalState.pencolor
-      };
-      applyStateToTurtle(nextState);
-      logicalState = nextState;
-      return;
-    }
-  }
-
-  function applyBatchFast(cmds) {
-    // Prevent any in-flight animation timers and clear the animation queue.
-    resetQueues();
-
-    // Prepare offscreen buffer (same pixel size as visible canvas)
-    flushCanvas.width = canvas.width;
-    flushCanvas.height = canvas.height;
-    // Match the visible canvas transform (DPR scaling) by copying current transform from ctx
-    // We rely on fitOneCanvas() having set flushCtx transform similarly.
-    // Clear offscreen in device pixels
-    flushCtx.setTransform(1, 0, 0, 1, 0, 0);
-    flushCtx.clearRect(0, 0, flushCanvas.width, flushCanvas.height);
-
-    // Re-apply DPR transform like fitOneCanvas does
-    const dpr = window.devicePixelRatio || 1;
-    flushCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // Paint background
-    const rect = canvas.getBoundingClientRect();
-    flushCtx.fillStyle = currentBg;
-    flushCtx.fillRect(0, 0, rect.width, rect.height);
-
-    // Apply commands to offscreen: update strokes + turtle state
-    for (let i = 0; i < cmds.length; i++) applyCmdFast(cmds[i]);
-
-    // Commit: single blit to visible canvas in device pixels
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(flushCanvas, 0, 0);
-    ctx.restore();
-
-    // Turtle overlay once at the end
-    redrawTurtle();
-  }
-
-function handleCanvasCmd(cmd) {
-    if (!cmd || !cmd.type) return;
-
-    if (cmd.type === "bg") {
-      currentBg = cmd.color || "#111111";
-      strokes.length = 0;
-      // background will be painted on flush canvas
-      return;
-    }
-
-    if (cmd.type === "clear") {
-      strokes.length = 0;
-      // background will be repainted on flush canvas
+      resetQueues();
+      canvasClear();
+      redrawTurtle();
       return;
     }
 
@@ -782,12 +689,8 @@ function handleCanvasCmd(cmd) {
       const visChanged = nextState.visible !== logicalState.visible;
       const colorChanged = nextState.pencolor !== logicalState.pencolor;
 
-      const speedForMove = (cmd.speed ?? lastKnownSpeed);
-
-      if (cmd.speed != null) lastKnownSpeed = cmd.speed;
-
       if (moved) {
-        q.push({ kind: "move", from: logicalState, to: nextState, speed: speedForMove });
+        q.push({ kind: "move", from: logicalState, to: nextState, speed: lastKnownSpeed });
       } else if (headingChanged || visChanged || colorChanged) {
         q.push({ kind: "state", state: nextState });
       }
@@ -954,18 +857,6 @@ function handleCanvasCmd(cmd) {
       if (m.type === "canvas_cmd") {
         if (!acceptCanvas) return;
         handleCanvasCmd(m.cmd);
-      }
-
-      // ✅ Batch flush for tracer(0)/update(): process many canvas commands in one message
-      if (m.type === "canvas_cmd_batch") {
-        if (!acceptCanvas) return;
-        const cmds = m.cmds || [];
-        // If this is an update() flush, apply in one fast pass (no animation queue)
-        if (m.flush) {
-          applyBatchFast(cmds);
-        } else {
-          for (let i = 0; i < cmds.length; i++) handleCanvasCmd(cmds[i]);
-        }
       }
 
       if (m.type === "input_request") {
