@@ -33,16 +33,19 @@ async function ensurePyodide() {
   pyodide.setStdout({ batched: s => post("stdout", { text: s }) });
   pyodide.setStderr({ batched: s => post("stderr", { text: s }) });
 
+  // async input() -> UI
   pyodide.globals.set("__worker_console_input__", (prompt) => {
     post("input_request", { prompt: String(prompt ?? "") });
     return new Promise(resolve => { pendingInputResolve = resolve; });
   });
 
+  // Canvas bridge: Python -> worker -> UI
   pyodide.globals.set("__canvas_cmd__", (obj) => {
     const cmd = toPlainObject(obj);
     post("canvas_cmd", { cmd });
   });
 
+  // Install async input
   await pyodide.runPythonAsync(`
 import builtins
 async def _input(prompt=""):
@@ -50,11 +53,19 @@ async def _input(prompt=""):
 builtins.input = _input
   `);
 
+  // Install browser turtle module named "turtle"
   await pyodide.runPythonAsync(`
 import math, types, sys
 
 def _cmd(**kwargs):
     __canvas_cmd__(kwargs)
+
+def _emit_state(t):
+    _cmd(type="turtle",
+         x=t.x, y=t.y,
+         heading=t.heading,
+         visible=t._visible,
+         pencolor=t._pencolor)
 
 class _WebTurtle:
     def __init__(self):
@@ -64,7 +75,9 @@ class _WebTurtle:
         self._pendown = True
         self._pencolor = "#00ff66"
         self._pensize = 2.0
-        self._speed = 0      # 0 fastest, 1..10 slower->faster
+        self._speed = 0      # 0 = instant
+        self._visible = True
+        _emit_state(self)
 
     def _line_to(self, nx, ny):
         if self._pendown:
@@ -76,33 +89,34 @@ class _WebTurtle:
                 width=self._pensize,
                 speed=self._speed
             )
-        self.x, self.y = nx, ny
+        self.x, self.y = float(nx), float(ny)
+        _emit_state(self)
 
     def forward(self, d):
         r = math.radians(self.heading)
-        nx = self.x + math.cos(r) * d
-        ny = self.y + math.sin(r) * d
+        nx = self.x + math.cos(r) * float(d)
+        ny = self.y + math.sin(r) * float(d)
         self._line_to(nx, ny)
 
     def backward(self, d):
-        self.forward(-d)
+        self.forward(-float(d))
 
     def left(self, deg):
-        self.heading = (self.heading + deg) % 360.0
+        self.heading = (self.heading + float(deg)) % 360.0
+        _emit_state(self)
 
     def right(self, deg):
-        self.heading = (self.heading - deg) % 360.0
+        self.heading = (self.heading - float(deg)) % 360.0
+        _emit_state(self)
 
     def goto(self, x, y=None):
         if y is None:
             x, y = x
         self._line_to(float(x), float(y))
 
-    # ✅ setpos should exist on Turtle objects
     def setpos(self, x, y=None):
         self.goto(x, y)
 
-    # common alias in turtle
     def setposition(self, x, y=None):
         self.goto(x, y)
 
@@ -112,12 +126,12 @@ class _WebTurtle:
     def pencolor(self, c=None):
         if c is None: return self._pencolor
         self._pencolor = str(c)
+        _emit_state(self)
 
     def pensize(self, w=None):
         if w is None: return self._pensize
         self._pensize = float(w)
 
-    # ✅ speed should exist on Turtle objects
     def speed(self, s=None):
         if s is None:
             return self._speed
@@ -129,15 +143,34 @@ class _WebTurtle:
         if s > 10: s = 10
         self._speed = s
 
-    def clear(self): _cmd(type="clear")
-    def bgcolor(self, c): _cmd(type="bg", color=str(c))
+    def hideturtle(self):
+        self._visible = False
+        _emit_state(self)
+
+    def ht(self): self.hideturtle()
+
+    def showturtle(self):
+        self._visible = True
+        _emit_state(self)
+
+    def st(self): self.showturtle()
+
+    def clear(self):
+        _cmd(type="clear")
+        _emit_state(self)
+
+    def bgcolor(self, c):
+        _cmd(type="bg", color=str(c))
+        _emit_state(self)
 
     def home(self):
         self.goto(0, 0)
         self.heading = 0.0
+        _emit_state(self)
 
     def setheading(self, deg):
         self.heading = float(deg) % 360.0
+        _emit_state(self)
 
 # shared default turtle
 _T = _WebTurtle()
@@ -168,6 +201,10 @@ def pencolor(c=None): return _T.pencolor(c)
 def pensize(w=None): return _T.pensize(w)
 def width(w=None): return _T.pensize(w)
 def speed(s=None): return _T.speed(s)
+def hideturtle(): _T.hideturtle()
+def ht(): _T.ht()
+def showturtle(): _T.showturtle()
+def st(): _T.st()
 def clear(): _T.clear()
 def bgcolor(c): _T.bgcolor(c)
 def home(): _T.home()
@@ -181,6 +218,7 @@ class Screen:
     def clearscreen(self): clear()
     def reset(self): reset()
 
+# Create module object "turtle"
 turtle = types.ModuleType("turtle")
 for _name, _obj in list(globals().items()):
     if _name.startswith("_"):
@@ -190,13 +228,13 @@ for _name, _obj in list(globals().items()):
 sys.modules["turtle"] = turtle
   `);
 
-  post("ready", { version: "turtle-speed-setpos-v1" });
+  post("ready");
 }
 
 function wrapUserCode(src) {
-  const t = src.replace(/(^|[^\w.])input\\s*\\(/g, "$1await input(");
-  const i = t.split("\\n").map(l => "    " + l);
-  return ["async def __main__():", ...i, "", "await __main__()"].join("\\n");
+  const t = src.replace(/(^|[^\w.])input\s*\(/g, "$1await input(");
+  const i = t.split("\n").map(l => "    " + l);
+  return ["async def __main__():", ...i, "", "await __main__()"].join("\n");
 }
 
 self.onmessage = async (ev) => {
@@ -210,6 +248,7 @@ self.onmessage = async (ev) => {
     if (msg.type === "run") {
       await ensurePyodide();
 
+      // reset turtle each run (Trinket-like)
       post("canvas_cmd", { cmd: { type: "clear" } });
       post("canvas_cmd", { cmd: { type: "bg", color: "#111111" } });
       await pyodide.runPythonAsync(`import turtle; turtle.reset()`);
