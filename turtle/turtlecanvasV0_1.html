@@ -399,19 +399,14 @@
   /* ---------- Worker run control ---------- */
   let worker = null;
   let running = false;
-
-  // Each Run gets a unique id so Stop can ignore late messages from older runs
-  let execId = 0;
-  let activeExecId = 0;
+  let runId = 0; // increments each time you run/stop; used to ignore stale worker messages
 
   function makeWorker() {
     const w = new Worker("./py_worker.js", { type: "module" });
     w.onmessage = (ev) => {
       const m = ev.data || {};
-
-      // Ignore messages from a previous run (after Stop / new Run)
-      // Messages with runId=0 (e.g., "ready", load status) are always accepted.
-      if (m.runId && m.runId !== activeExecId) return;
+      // Ignore messages from older runs (e.g., after Stop)
+      if (m.runId && m.runId !== runId) return;
 
       if (m.type === "stdout") writeln(m.text ?? "");
       if (m.type === "stderr") writeln(m.text ?? "");
@@ -445,17 +440,12 @@
   function stopExecution(reason = "Stopped") {
     const shouldAnnounce = (running || waitingForInput);
 
-    // Invalidate current run id so late worker messages are ignored
-    execId += 1;
-    activeExecId = execId;
+    // Invalidate any late messages from the current run
+    runId += 1;
 
     cancelInputIfAny();
 
-    if (shouldAnnounce) {
-      // EXACT text requested
-      writeln("Program stopped by user");
-    }
-
+    // Terminate and recreate the worker so Python stops immediately
     try { worker?.terminate(); } catch {}
     worker = makeWorker();
 
@@ -464,8 +454,9 @@
     stopBtn.disabled = true;
     setStatus(reason);
 
-    // Optional hook if you also have main-thread animation queues to stop
-    window.dispatchEvent(new CustomEvent("py-program-stopped", { detail: { runId: activeExecId } }));
+    if (shouldAnnounce) {
+      writeln("Program stopped by user");
+    }
   }
 
   // Stop button
@@ -520,15 +511,12 @@
   runBtn.onclick = () => {
     clearConsole();
     if (!worker) worker = makeWorker();
-
-    execId += 1;
-    activeExecId = execId;
-
     running = true;
     runBtn.disabled = true;
     stopBtn.disabled = false;
     setStatus("Running…");
-    worker.postMessage({ type: "run", code: cm.getValue(), runId: activeExecId });
+    runId += 1;
+    worker.postMessage({ type: "run", code: cm.getValue(), runId });
     consoleEl.focus();
   };
 
