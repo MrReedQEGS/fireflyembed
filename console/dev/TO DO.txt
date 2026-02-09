@@ -6,6 +6,19 @@ it creates my_prog even if it already exists and I think it can write over the o
 Make tab work like it does on the turtle example
 add protection for >30000 lines executed and a +3 seconds time out for while true: pass etc.
 
+***************************
+Add ability to do ?file=helloworld.py at the end of the URL inside the iframe, so each firefly embed loads a specific sample .py file.
+<iframe
+  src="https://YOUR-GITHUB-PAGES-SITE/turtlecanvasV0_1_new_inactivity_friendlystop2.html?sample=spiral"
+  width="100%"
+  height="700"
+  style="border:0;"
+></iframe
+function getRequestedSampleKey() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("sample"); // e.g. "spiral"
+}
+***************************
 
 Done
 input flashing caret
