@@ -1,0 +1,27 @@
+TODO...
+NEXT BIG THING TO FIX
+ordering messed up.  If you draw squares and print "square 1" "square 2" etc.  The prints all happen instantly while the drawing is still happening.  Adding a seq with AI might help?
+The above thing was fixed, but it appeared to break how input was working. Need to go again with AI and tread carefully this time!
+This is messing up bob.reset() too.  The reset is happening before the drawing has finished.
+NEXT BIG THING TO FIX
+
+way to change backgroud colour?
+load sprites like fifa etc from my github
+zoom in and out of drawing window
+drawing not deleted when window resized
+save, upload, etc. just like the non turtle one.
+turtle shape choices?  Could I store the .png on my github and load them in.
+Same for fifa card, etc.  Could a list of available assets be seen and selectable to place on the drawing somehow?
+More than one turtle.
+Colours
+begin_fill() etc.
+The rest of the PLS
+The screen bit where you can change the drawing size, so it will need bars at the side to scroll if the image is bigger than the window.
+Button to hide the conosle or hide the turtle window
+text on the drawing with fonts, etc.
+
+
+done - turtle
+ability to resize all 3 windows
+input with flashing caret - working again!!!
+tracer(0) and update() now work.
