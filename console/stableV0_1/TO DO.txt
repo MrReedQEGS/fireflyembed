@@ -1,0 +1,15 @@
+As of 9.2.26
+Useful website
+https://favicon.io/emoji-favicons/alien-monster
+
+TO DO
+it creates my_prog even if it already exists and I think it can write over the one you have if you are not careful.
+Make tab work like it does on the turtle example
+add protection for >30000 lines executed and a +3 seconds time out for while true: pass etc.
+
+
+Done
+input flashing caret
+loading and saving text files
+iframe embed works
+stop button works
