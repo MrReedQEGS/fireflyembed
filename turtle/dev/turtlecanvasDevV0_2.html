@@ -1107,7 +1107,14 @@ document.addEventListener("DOMContentLoaded", () => {
   privacyBtn.title = "Privacy / GDPR";
   privacyBtn.style.marginRight = "6px";
   privacyBtn.addEventListener("click", () => {
-    alert(PRIVACY_TEXT);
+    
+    const accepted = confirm(
+      PRIVACY_TEXT + "\n\nClick OK to view GitHub’s Privacy Policy in a new tab."
+    );
+    if (accepted) {
+      window.open("https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement", "_blank", "noopener");
+    }
+
   });
 
   // Insert inline with other buttons (to the left of the first button)
