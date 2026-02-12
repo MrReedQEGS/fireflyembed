@@ -113,7 +113,7 @@
 
 <body>
 <header>
-  <label style="font-size:14px;color:#444;">Mark Reed - Dev v0.2 - Program:</label>
+  <label style="font-size:14px;color:#444;">Tracer2.0 - Program:</label>
   <select id="program" disabled></select>
 
   <button id="run" disabled>Run ▶</button>
@@ -1092,5 +1092,28 @@
     setStatus("Ready");
   })();
 </script>
+
+<script>
+// === Privacy button (UI-only) ===
+document.addEventListener("DOMContentLoaded", () => {
+  const PRIVACY_TEXT = "GDPR text string goes here";
+
+  // Find the first existing button (assumed to be in the top control bar)
+  const firstButton = document.querySelector("button");
+  if (!firstButton || !firstButton.parentElement) return;
+
+  const privacyBtn = document.createElement("button");
+  privacyBtn.textContent = "Privacy";
+  privacyBtn.title = "Privacy / GDPR";
+  privacyBtn.style.marginRight = "6px";
+  privacyBtn.addEventListener("click", () => {
+    alert(PRIVACY_TEXT);
+  });
+
+  // Insert inline with other buttons (to the left of the first button)
+  firstButton.parentElement.insertBefore(privacyBtn, firstButton);
+});
+</script>
+
 </body>
 </html>
