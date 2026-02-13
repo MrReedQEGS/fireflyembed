@@ -1,0 +1,3 @@
+I can host pyodide and codemirror 5 in a folder on my page and this takes the CDN stuff out of the equation.  More likely to get through school filtering systems as it all my domain.
+I can use cloudflare for free after setting up a website to handle caching and reducing bandwith on my back end server.
+I would still need a back end server with its own CDN and database for saving py files as text.  This would lead to a fairly small monthly cost even for lots of students.  $50 to $200 a month with headroom and backups!
